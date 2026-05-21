@@ -1,6 +1,7 @@
 # 吾郎の不思議なダンジョン
 
 ブラウザで動く、シンプルなローグライク（不思議のダンジョン風）です。
+https://thashimoto-visco.github.io/game_goro_dangeon/
 
 ## 遊び方
 
