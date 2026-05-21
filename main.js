@@ -198,6 +198,44 @@ function tryMove(dx, dy) {
   tickTurn();
 }
 
+
+function drawMonsterShape(enemy) {
+  const px = enemy.x * TILE;
+  const py = enemy.y * TILE;
+
+  if (enemy.sprite === "slime") {
+    ctx.fillStyle = "#5eead4";
+    ctx.beginPath();
+    ctx.ellipse(px + 16, py + 20, 11, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(px + 11, py + 18, 3, 3);
+    ctx.fillRect(px + 18, py + 18, 3, 3);
+    return;
+  }
+
+  if (enemy.sprite === "bat") {
+    ctx.fillStyle = "#a78bfa";
+    ctx.beginPath();
+    ctx.moveTo(px + 6, py + 18);
+    ctx.lineTo(px + 14, py + 12);
+    ctx.lineTo(px + 20, py + 18);
+    ctx.lineTo(px + 26, py + 12);
+    ctx.lineTo(px + 28, py + 20);
+    ctx.lineTo(px + 20, py + 24);
+    ctx.lineTo(px + 14, py + 20);
+    ctx.closePath();
+    ctx.fill();
+    return;
+  }
+
+  ctx.fillStyle = "#f59e0b";
+  ctx.fillRect(px + 8, py + 8, 16, 16);
+  ctx.fillStyle = "#111827";
+  ctx.fillRect(px + 11, py + 13, 3, 3);
+  ctx.fillRect(px + 18, py + 13, 3, 3);
+}
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -215,11 +253,10 @@ function draw() {
   for (const e of state.enemies) {
     if (e.hp <= 0) continue;
     const sprite = monsterSprites[e.sprite];
-    if (sprite && sprite.complete) {
+    if (sprite && sprite.complete && sprite.naturalWidth > 0) {
       ctx.drawImage(sprite, e.x * TILE + 4, e.y * TILE + 4, 24, 24);
     } else {
-      ctx.fillStyle = "#ef4444";
-      ctx.fillRect(e.x * TILE + 6, e.y * TILE + 6, 20, 20);
+      drawMonsterShape(e);
     }
   }
 
