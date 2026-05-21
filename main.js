@@ -5,7 +5,16 @@ const ROWS = 15;
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const goroImage = new Image();
-goroImage.src = "assets/goro.svg";
+goroImage.src = "assets/goro_sprite_sheet.svg";
+
+const monsterSprites = {
+  slime: new Image(),
+  bat: new Image(),
+  golem: new Image(),
+};
+monsterSprites.slime.src = "assets/monster_slime.svg";
+monsterSprites.bat.src = "assets/monster_bat.svg";
+monsterSprites.golem.src = "assets/monster_golem.svg";
 
 const ui = {
   floor: document.getElementById("floor"),
@@ -85,13 +94,23 @@ function generateFloor() {
   const stairRoom = rooms[rooms.length - 1];
   state.stairs = { x: stairRoom.cx, y: stairRoom.cy };
 
-  state.enemies = rooms.slice(1, 6).map((room, i) => ({
-    x: room.cx,
-    y: room.cy,
-    hp: 6 + state.floor,
-    atk: 2 + Math.floor(state.floor / 2),
-    name: `ゴロゴロモンスター${i + 1}`,
-  }));
+  const monsterTypes = [
+    { key: "slime", name: "ぬるりスライム" },
+    { key: "bat", name: "バサバサコウモリ" },
+    { key: "golem", name: "ゴロ岩ゴーレム" },
+  ];
+
+  state.enemies = rooms.slice(1, 6).map((room, i) => {
+    const type = monsterTypes[i % monsterTypes.length];
+    return {
+      x: room.cx,
+      y: room.cy,
+      hp: 6 + state.floor,
+      atk: 2 + Math.floor(state.floor / 2),
+      name: type.name,
+      sprite: type.key,
+    };
+  });
 }
 
 function isWalkable(x, y) {
@@ -195,12 +214,17 @@ function draw() {
 
   for (const e of state.enemies) {
     if (e.hp <= 0) continue;
-    ctx.fillStyle = "#ef4444";
-    ctx.fillRect(e.x * TILE + 6, e.y * TILE + 6, 20, 20);
+    const sprite = monsterSprites[e.sprite];
+    if (sprite && sprite.complete) {
+      ctx.drawImage(sprite, e.x * TILE + 4, e.y * TILE + 4, 24, 24);
+    } else {
+      ctx.fillStyle = "#ef4444";
+      ctx.fillRect(e.x * TILE + 6, e.y * TILE + 6, 20, 20);
+    }
   }
 
   if (goroImage.complete) {
-    ctx.drawImage(goroImage, state.player.x * TILE + 4, state.player.y * TILE + 4, 24, 24);
+    ctx.drawImage(goroImage, 18, 10, 92, 168, state.player.x * TILE + 2, state.player.y * TILE + 2, 28, 28);
   } else {
     ctx.fillStyle = "#22c55e";
     ctx.fillRect(state.player.x * TILE + 6, state.player.y * TILE + 6, 20, 20);

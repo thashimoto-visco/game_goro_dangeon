@@ -21,3 +21,6 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 
 - 参照用ラスタ画像: `assets/goro_reference_1.svg`
 - 参照用ラスタ画像（2枚目）: `assets/goro_reference_2.svg`
+
+- 吾郎スプライトシート: `assets/goro_sprite_sheet.svg`
+- モンスター画像: `assets/monster_slime.svg`, `assets/monster_bat.svg`, `assets/monster_golem.svg`

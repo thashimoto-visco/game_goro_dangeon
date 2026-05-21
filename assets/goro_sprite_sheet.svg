@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="2048" viewBox="0 0 1536 2048" role="img" aria-label="吾郎スプライトシート（参照用）">
+  <rect width="1536" height="2048" fill="#0b0f18"/>
+  <g transform="translate(80,70)">
+    <use href="#goro"/>
+  </g>
+  <g transform="translate(320,70)"><use href="#goro"/></g>
+  <g transform="translate(560,70)"><use href="#goro"/></g>
+  <g transform="translate(800,70)"><use href="#goro"/></g>
+  <g transform="translate(1040,70)"><use href="#goro"/></g>
+  <g transform="translate(1280,70)"><use href="#goro"/></g>
+  <defs>
+    <g id="goro">
+      <ellipse cx="64" cy="44" rx="30" ry="34" fill="#e8c89f"/>
+      <ellipse cx="50" cy="38" rx="9" ry="14" fill="#555" opacity="0.5"/>
+      <rect x="40" y="36" width="18" height="10" rx="3" fill="none" stroke="#111" stroke-width="2"/>
+      <rect x="70" y="36" width="18" height="10" rx="3" fill="none" stroke="#111" stroke-width="2"/>
+      <rect x="58" y="40" width="12" height="2" fill="#111"/>
+      <rect x="40" y="76" width="48" height="54" rx="10" fill="#14213d"/>
+      <rect x="44" y="130" width="16" height="38" rx="6" fill="#b78f5a"/>
+      <rect x="68" y="130" width="16" height="38" rx="6" fill="#b78f5a"/>
+      <rect x="42" y="166" width="18" height="10" rx="4" fill="#222"/>
+      <rect x="66" y="166" width="18" height="10" rx="4" fill="#222"/>
+    </g>
+  </defs>
+</svg>
