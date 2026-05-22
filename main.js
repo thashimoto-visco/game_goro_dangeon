@@ -6,6 +6,7 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const goroImage = new Image();
 goroImage.src = "assets/goro_sprite_sheet.svg";
+const goroSprite = { x: 80, y: 70, w: 128, h: 176 };
 
 const monsterSprites = {
   slime: new Image(),
@@ -236,6 +237,22 @@ function drawMonsterShape(enemy) {
   ctx.fillRect(px + 18, py + 13, 3, 3);
 }
 
+function drawPlayerShape() {
+  const px = state.player.x * TILE;
+  const py = state.player.y * TILE;
+
+  ctx.fillStyle = "#e8c89f";
+  ctx.beginPath();
+  ctx.ellipse(px + 16, py + 11, 8, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#14213d";
+  ctx.fillRect(px + 10, py + 18, 12, 10);
+  ctx.fillStyle = "#111827";
+  ctx.fillRect(px + 12, py + 10, 2, 2);
+  ctx.fillRect(px + 18, py + 10, 2, 2);
+}
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -260,11 +277,20 @@ function draw() {
     }
   }
 
-  if (goroImage.complete) {
-    ctx.drawImage(goroImage, 18, 10, 92, 168, state.player.x * TILE + 2, state.player.y * TILE + 2, 28, 28);
+  if (goroImage.complete && goroImage.naturalWidth > 0) {
+    ctx.drawImage(
+      goroImage,
+      goroSprite.x,
+      goroSprite.y,
+      goroSprite.w,
+      goroSprite.h,
+      state.player.x * TILE + 5,
+      state.player.y * TILE + 1,
+      22,
+      30
+    );
   } else {
-    ctx.fillStyle = "#22c55e";
-    ctx.fillRect(state.player.x * TILE + 6, state.player.y * TILE + 6, 20, 20);
+    drawPlayerShape();
   }
 }
 
