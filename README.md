@@ -24,3 +24,5 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 
 - 吾郎スプライトシート: `assets/goro_sprite_sheet.svg`
 - モンスター画像: `assets/monster_slime.svg`, `assets/monster_bat.svg`, `assets/monster_golem.svg`
+
+- ゲーム内プレイヤー画像: `assets/goro_player.svg`

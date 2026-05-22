@@ -5,7 +5,7 @@ const ROWS = 15;
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const goroImage = new Image();
-goroImage.src = "assets/goro_sprite_sheet.svg";
+goroImage.src = "assets/goro_player.svg";
 
 const monsterSprites = {
   slime: new Image(),
@@ -260,8 +260,8 @@ function draw() {
     }
   }
 
-  if (goroImage.complete) {
-    ctx.drawImage(goroImage, 18, 10, 92, 168, state.player.x * TILE + 2, state.player.y * TILE + 2, 28, 28);
+  if (goroImage.complete && goroImage.naturalWidth > 0) {
+    ctx.drawImage(goroImage, state.player.x * TILE + 2, state.player.y * TILE + 2, 28, 28);
   } else {
     ctx.fillStyle = "#22c55e";
     ctx.fillRect(state.player.x * TILE + 6, state.player.y * TILE + 6, 20, 20);
