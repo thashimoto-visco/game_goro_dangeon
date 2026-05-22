@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="吾郎プレイヤースプライト">
+  <ellipse cx="32" cy="16" rx="12" ry="13" fill="#e8c89f"/>
+  <ellipse cx="26" cy="13" rx="4" ry="6" fill="#555" opacity="0.45"/>
+  <rect x="22" y="12" width="8" height="5" rx="2" fill="none" stroke="#111" stroke-width="1.5"/>
+  <rect x="34" y="12" width="8" height="5" rx="2" fill="none" stroke="#111" stroke-width="1.5"/>
+  <rect x="30" y="14" width="4" height="1.5" fill="#111"/>
+  <rect x="22" y="29" width="20" height="20" rx="5" fill="#14213d"/>
+  <rect x="24" y="49" width="7" height="10" rx="2" fill="#b78f5a"/>
+  <rect x="33" y="49" width="7" height="10" rx="2" fill="#b78f5a"/>
+  <rect x="23" y="58" width="8" height="4" rx="1.5" fill="#222"/>
+  <rect x="33" y="58" width="8" height="4" rx="1.5" fill="#222"/>
+</svg>

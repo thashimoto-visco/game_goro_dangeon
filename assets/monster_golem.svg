@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="ゴーレム系モンスター">
+  <rect x="14" y="14" width="36" height="36" rx="8" fill="#f59e0b" stroke="#92400e" stroke-width="3"/>
+  <rect x="20" y="24" width="8" height="8" rx="2" fill="#111827"/>
+  <rect x="36" y="24" width="8" height="8" rx="2" fill="#111827"/>
+  <rect x="24" y="38" width="16" height="4" rx="2" fill="#7c2d12"/>
+</svg>

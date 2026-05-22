@@ -1,0 +1,68 @@
+:root {
+  color-scheme: dark;
+  font-family: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #0f1118;
+  color: #e6ecff;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(640px, 2fr) minmax(280px, 1fr);
+  gap: 1rem;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.game-panel,
+.ui-panel {
+  background: #171b27;
+  border: 1px solid #26304d;
+  border-radius: 10px;
+  padding: 0.9rem;
+}
+
+h1,
+h2 {
+  margin: 0.1rem 0 0.7rem;
+}
+
+.subtitle {
+  margin-top: 0;
+  color: #adbbff;
+  font-size: 0.9rem;
+}
+
+canvas {
+  background: #090b10;
+  border: 1px solid #2b3658;
+  width: 100%;
+  image-rendering: pixelated;
+}
+
+dl {
+  margin: 0;
+}
+
+dl div {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid #25304f;
+}
+
+.log {
+  margin: 0;
+  padding-left: 1.2rem;
+  max-height: 250px;
+  overflow: auto;
+}
+
+.log li {
+  margin: 0.2rem 0;
+  color: #c5d2ff;
+}
