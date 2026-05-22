@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1536" height="2048" viewBox="0 0 1536 2048" role="img" aria-label="吾郎スプライトシート（参照用）">
-  <rect width="1536" height="2048" fill="#0b0f18"/>
+  <rect width="1536" height="2048" fill="none"/>
   <g transform="translate(80,70)">
     <use href="#goro"/>
   </g>
