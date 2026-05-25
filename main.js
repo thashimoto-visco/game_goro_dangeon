@@ -51,6 +51,28 @@ const sprites = {
       left: { image: images.goro, x: 42, y: 213, w: 108, h: 198, flipX: true },
       right: { image: images.goro, x: 42, y: 213, w: 108, h: 198 },
     },
+    walk: {
+      down: [
+        { image: images.goro, x: 244, y: 5, w: 87, h: 198 },
+        { image: images.goro, x: 820, y: 5, w: 87, h: 198 },
+      ],
+      up: [
+        { image: images.goro, x: 244, y: 5, w: 87, h: 198 },
+        { image: images.goro, x: 820, y: 5, w: 87, h: 198 },
+      ],
+      left: [
+        { image: images.goro, x: 42, y: 213, w: 108, h: 198, flipX: true },
+        { image: images.goro, x: 230, y: 213, w: 115, h: 198, flipX: true },
+        { image: images.goro, x: 427, y: 213, w: 106, h: 198, flipX: true },
+        { image: images.goro, x: 619, y: 213, w: 106, h: 198, flipX: true },
+      ],
+      right: [
+        { image: images.goro, x: 42, y: 213, w: 108, h: 198 },
+        { image: images.goro, x: 230, y: 213, w: 115, h: 198 },
+        { image: images.goro, x: 427, y: 213, w: 106, h: 198 },
+        { image: images.goro, x: 619, y: 213, w: 106, h: 198 },
+      ],
+    },
   },
   tiles: {
     floor: [
@@ -123,6 +145,7 @@ const state = {
     def: 2,
     hunger: 100,
     exp: 0,
+    motion: null,
   },
 };
 
@@ -187,6 +210,60 @@ function canAcceptInput() {
   return true;
 }
 
+function startPlayerWalk(fromX, fromY, toX, toY) {
+  state.player.motion = {
+    type: "walk",
+    fromX,
+    fromY,
+    toX,
+    toY,
+    age: 0,
+    duration: 160,
+  };
+}
+
+function clearPlayerMotion() {
+  state.player.motion = null;
+}
+
+function updatePlayerMotion(delta) {
+  const motion = state.player.motion;
+  if (!motion) return;
+
+  motion.age += delta;
+  if (motion.age >= motion.duration) {
+    clearPlayerMotion();
+  }
+}
+
+function getPlayerVisualGrid() {
+  const motion = state.player.motion;
+  if (!motion || motion.type !== "walk") {
+    return { x: state.player.x, y: state.player.y, progress: 1, walking: false };
+  }
+
+  const progress = clamp(motion.age / motion.duration, 0, 1);
+  const eased = 1 - Math.pow(1 - progress, 3);
+  return {
+    x: motion.fromX + (motion.toX - motion.fromX) * eased,
+    y: motion.fromY + (motion.toY - motion.fromY) * eased,
+    progress,
+    walking: true,
+  };
+}
+
+function getPlayerSprite() {
+  const direction = state.player.direction;
+  const visual = getPlayerVisualGrid();
+  if (!visual.walking) {
+    return sprites.player.idle[direction] || sprites.player.idle.down;
+  }
+
+  const frames = sprites.player.walk[direction] || sprites.player.walk.down;
+  const frameIndex = Math.min(frames.length - 1, Math.floor(visual.progress * frames.length));
+  return frames[frameIndex];
+}
+
 function addFloatingText(text, x, y, color = "#ffffff") {
   effects.push({
     type: "floatingText",
@@ -213,6 +290,7 @@ function startFlash(color = "rgba(255,255,255,0.25)", duration = 120) {
 
 function clearTransientVisuals() {
   effects.length = 0;
+  clearPlayerMotion();
   camera.x = 0;
   camera.y = 0;
   camera.shakeTime = 0;
@@ -222,8 +300,9 @@ function clearTransientVisuals() {
 }
 
 function updateCameraTarget() {
-  const playerCenterX = gridToWorldX(state.player.x) + TILE / 2;
-  const playerCenterY = gridToWorldY(state.player.y) + TILE / 2;
+  const visual = getPlayerVisualGrid();
+  const playerCenterX = gridToWorldX(visual.x) + TILE / 2;
+  const playerCenterY = gridToWorldY(visual.y) + TILE / 2;
   const mapWidth = COLS * TILE;
   const mapHeight = ROWS * TILE;
 
@@ -265,6 +344,7 @@ function generateFloor() {
   const start = rooms[0];
   state.player.x = start.cx;
   state.player.y = start.cy;
+  clearPlayerMotion();
   updateCameraTarget();
 
   const stairRoom = rooms[rooms.length - 1];
@@ -370,6 +450,7 @@ function tryMove(dx, dy) {
   }
 
   if (!isWalkable(nx, ny)) return;
+  startPlayerWalk(state.player.x, state.player.y, nx, ny);
   state.player.x = nx;
   state.player.y = ny;
 
@@ -457,6 +538,7 @@ function drawSprite(sprite, dx, dy, dw, dh) {
 
 function updateAnimations(delta) {
   runtime.elapsed += delta;
+  updatePlayerMotion(delta);
   updateCameraTarget();
   updateEffects(delta);
   updateCamera(delta);
@@ -547,12 +629,16 @@ function drawItemLayer() {
 }
 
 function actorFootY(actor) {
+  if (actor === state.player) {
+    return gridToWorldY(getPlayerVisualGrid().y) + TILE;
+  }
   return gridToWorldY(actor.y) + TILE;
 }
 
 function actorDrawPosition(actor, draw) {
-  const footX = gridToWorldX(actor.x) + TILE / 2;
-  const footY = gridToWorldY(actor.y) + TILE;
+  const visual = actor === state.player ? getPlayerVisualGrid() : actor;
+  const footX = gridToWorldX(visual.x) + TILE / 2;
+  const footY = gridToWorldY(visual.y) + TILE;
   return {
     x: worldToScreenX(footX + draw.offsetX),
     y: worldToScreenY(footY + draw.offsetY),
@@ -570,7 +656,7 @@ function drawEnemyActor(enemy) {
 }
 
 function drawPlayerActor() {
-  const sprite = sprites.player.idle[state.player.direction] || sprites.player.idle.down;
+  const sprite = getPlayerSprite();
   const position = actorDrawPosition(state.player, PLAYER_DRAW);
   const didDraw = drawSprite(sprite, position.x, position.y, PLAYER_DRAW.w, PLAYER_DRAW.h);
   if (!didDraw) {
@@ -687,6 +773,7 @@ window.addEventListener("keydown", (event) => {
     state.player.hunger = 100;
     state.player.exp = 0;
     state.player.direction = "down";
+    clearPlayerMotion();
     clearTransientVisuals();
     addLog("再挑戦！");
     generateFloor();
