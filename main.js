@@ -1,9 +1,14 @@
 const TILE = 32;
-const COLS = 20;
-const ROWS = 15;
+const COLS = 40;
+const ROWS = 30;
 const MAX_DELTA = 100;
-const PLAYER_DRAW = { offsetX: 5, offsetY: -4, w: 22, h: 36 };
-const ENEMY_DRAW = { offsetX: 4, offsetY: 4, w: 24, h: 24 };
+const PLAYER_DRAW = { offsetX: -22, offsetY: -92, w: 44, h: 92 };
+const ENEMY_DRAW = {
+  slime: { offsetX: -20, offsetY: -36, w: 40, h: 34 },
+  bat: { offsetX: -27, offsetY: -54, w: 54, h: 42 },
+  golem: { offsetX: -29, offsetY: -66, w: 58, h: 66 },
+  fallback: { offsetX: -24, offsetY: -58, w: 48, h: 58 },
+};
 const STAIRS_DRAW = { offsetX: 8, offsetY: 8, w: 16, h: 16 };
 
 const canvas = document.getElementById("game");
@@ -17,6 +22,20 @@ function createImage(src) {
 
 const images = {
   goro: createImage("assets/materials/spritesheet.webp"),
+  tiles: {
+    floor1: createImage("assets/tiles/floor_01.svg"),
+    floor2: createImage("assets/tiles/floor_02.svg"),
+    floor3: createImage("assets/tiles/floor_03.svg"),
+    wall1: createImage("assets/tiles/wall_01.svg"),
+    wall2: createImage("assets/tiles/wall_02.svg"),
+    wall3: createImage("assets/tiles/wall_03.svg"),
+    stairsDown: createImage("assets/tiles/stairs_down.svg"),
+  },
+  icons: {
+    weapon: createImage("assets/icons/item_weapon.svg"),
+    food: createImage("assets/icons/item_food.svg"),
+    potion: createImage("assets/icons/item_potion.svg"),
+  },
   monsters: {
     slime: createImage("assets/monster_slime.svg"),
     bat: createImage("assets/monster_bat.svg"),
@@ -29,9 +48,27 @@ const sprites = {
     idle: {
       down: { image: images.goro, x: 52, y: 5, w: 87, h: 185 },
       up: { image: images.goro, x: 52, y: 5, w: 87, h: 185 },
-      left: { image: images.goro, x: 52, y: 5, w: 87, h: 185 },
-      right: { image: images.goro, x: 52, y: 5, w: 87, h: 185 },
+      left: { image: images.goro, x: 42, y: 213, w: 108, h: 198, flipX: true },
+      right: { image: images.goro, x: 42, y: 213, w: 108, h: 198 },
     },
+  },
+  tiles: {
+    floor: [
+      { image: images.tiles.floor1 },
+      { image: images.tiles.floor2 },
+      { image: images.tiles.floor3 },
+    ],
+    wall: [
+      { image: images.tiles.wall1 },
+      { image: images.tiles.wall2 },
+      { image: images.tiles.wall3 },
+    ],
+    stairsDown: { image: images.tiles.stairsDown },
+  },
+  icons: {
+    weapon: { image: images.icons.weapon },
+    food: { image: images.icons.food },
+    potion: { image: images.icons.potion },
   },
   monsters: {
     slime: { image: images.monsters.slime },
@@ -48,6 +85,8 @@ const runtime = {
 const effects = [];
 
 const camera = {
+  x: 0,
+  y: 0,
   shakeTime: 0,
   shakeDuration: 0,
   shakeStrength: 0,
@@ -89,6 +128,34 @@ const state = {
 
 function rng(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function gridToWorldX(x) {
+  return x * TILE;
+}
+
+function gridToWorldY(y) {
+  return y * TILE;
+}
+
+function worldToScreenX(x) {
+  return Math.round(x - camera.x);
+}
+
+function worldToScreenY(y) {
+  return Math.round(y - camera.y);
+}
+
+function gridToScreenX(x) {
+  return worldToScreenX(gridToWorldX(x));
+}
+
+function gridToScreenY(y) {
+  return worldToScreenY(gridToWorldY(y));
 }
 
 function addLog(text) {
@@ -146,10 +213,22 @@ function startFlash(color = "rgba(255,255,255,0.25)", duration = 120) {
 
 function clearTransientVisuals() {
   effects.length = 0;
+  camera.x = 0;
+  camera.y = 0;
   camera.shakeTime = 0;
   camera.shakeDuration = 0;
   overlay.flashTime = 0;
   overlay.flashDuration = 0;
+}
+
+function updateCameraTarget() {
+  const playerCenterX = gridToWorldX(state.player.x) + TILE / 2;
+  const playerCenterY = gridToWorldY(state.player.y) + TILE / 2;
+  const mapWidth = COLS * TILE;
+  const mapHeight = ROWS * TILE;
+
+  camera.x = clamp(playerCenterX - canvas.width / 2, 0, Math.max(0, mapWidth - canvas.width));
+  camera.y = clamp(playerCenterY - canvas.height / 2, 0, Math.max(0, mapHeight - canvas.height));
 }
 
 function carveRoom(map, x, y, w, h) {
@@ -164,9 +243,9 @@ function generateFloor() {
   const map = Array.from({ length: ROWS }, () => Array(COLS).fill("#"));
   const rooms = [];
 
-  for (let i = 0; i < 8; i++) {
-    const w = rng(4, 7);
-    const h = rng(3, 5);
+  for (let i = 0; i < 14; i++) {
+    const w = rng(5, 9);
+    const h = rng(4, 7);
     const x = rng(1, COLS - w - 2);
     const y = rng(1, ROWS - h - 2);
 
@@ -186,6 +265,7 @@ function generateFloor() {
   const start = rooms[0];
   state.player.x = start.cx;
   state.player.y = start.cy;
+  updateCameraTarget();
 
   const stairRoom = rooms[rooms.length - 1];
   state.stairs = { x: stairRoom.cx, y: stairRoom.cy };
@@ -304,61 +384,66 @@ function tryMove(dx, dy) {
 }
 
 
-function drawMonsterShape(enemy) {
-  const px = enemy.x * TILE;
-  const py = enemy.y * TILE;
+function drawMonsterShape(enemy, px, py, draw = ENEMY_DRAW.fallback) {
+  const centerX = px + draw.w / 2;
+  const footY = py + draw.h;
 
   if (enemy.sprite === "slime") {
     ctx.fillStyle = "#5eead4";
     ctx.beginPath();
-    ctx.ellipse(px + 16, py + 20, 11, 9, 0, 0, Math.PI * 2);
+    ctx.ellipse(centerX, footY - 10, draw.w / 2, draw.h / 3, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#0f172a";
-    ctx.fillRect(px + 11, py + 18, 3, 3);
-    ctx.fillRect(px + 18, py + 18, 3, 3);
+    ctx.fillRect(centerX - 7, footY - 13, 4, 4);
+    ctx.fillRect(centerX + 4, footY - 13, 4, 4);
     return;
   }
 
   if (enemy.sprite === "bat") {
     ctx.fillStyle = "#a78bfa";
     ctx.beginPath();
-    ctx.moveTo(px + 6, py + 18);
-    ctx.lineTo(px + 14, py + 12);
-    ctx.lineTo(px + 20, py + 18);
-    ctx.lineTo(px + 26, py + 12);
-    ctx.lineTo(px + 28, py + 20);
-    ctx.lineTo(px + 20, py + 24);
-    ctx.lineTo(px + 14, py + 20);
+    ctx.moveTo(px + 3, py + draw.h * 0.55);
+    ctx.lineTo(centerX - 6, py + 8);
+    ctx.lineTo(centerX + 4, py + draw.h * 0.5);
+    ctx.lineTo(px + draw.w - 4, py + 8);
+    ctx.lineTo(px + draw.w - 2, py + draw.h * 0.72);
+    ctx.lineTo(centerX + 5, py + draw.h - 5);
+    ctx.lineTo(centerX - 6, py + draw.h * 0.72);
     ctx.closePath();
     ctx.fill();
     return;
   }
 
   ctx.fillStyle = "#f59e0b";
-  ctx.fillRect(px + 8, py + 8, 16, 16);
+  ctx.fillRect(px + 5, py + 5, draw.w - 10, draw.h - 8);
   ctx.fillStyle = "#111827";
-  ctx.fillRect(px + 11, py + 13, 3, 3);
-  ctx.fillRect(px + 18, py + 13, 3, 3);
+  ctx.fillRect(centerX - 8, py + 18, 4, 4);
+  ctx.fillRect(centerX + 4, py + 18, 4, 4);
 }
 
-function drawPlayerShape() {
-  const px = state.player.x * TILE;
-  const py = state.player.y * TILE;
-
+function drawPlayerShape(px, py) {
   ctx.fillStyle = "#e8c89f";
   ctx.beginPath();
-  ctx.ellipse(px + 16, py + 11, 8, 9, 0, 0, Math.PI * 2);
+  ctx.ellipse(px + PLAYER_DRAW.w / 2, py + 18, 16, 18, 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = "#14213d";
-  ctx.fillRect(px + 10, py + 18, 12, 10);
+  ctx.fillRect(px + 20, py + 38, 28, 34);
   ctx.fillStyle = "#111827";
-  ctx.fillRect(px + 12, py + 10, 2, 2);
-  ctx.fillRect(px + 18, py + 10, 2, 2);
+  ctx.fillRect(px + 27, py + 16, 4, 4);
+  ctx.fillRect(px + 39, py + 16, 4, 4);
 }
 
 function drawSprite(sprite, dx, dy, dw, dh) {
   if (!sprite || !isImageReady(sprite.image)) return false;
+
+  ctx.save();
+  if (sprite.flipX) {
+    ctx.translate(dx + dw, dy);
+    ctx.scale(-1, 1);
+    dx = 0;
+    dy = 0;
+  }
 
   if (Number.isFinite(sprite.x)) {
     ctx.drawImage(sprite.image, sprite.x, sprite.y, sprite.w, sprite.h, dx, dy, dw, dh);
@@ -366,11 +451,13 @@ function drawSprite(sprite, dx, dy, dw, dh) {
     ctx.drawImage(sprite.image, dx, dy, dw, dh);
   }
 
+  ctx.restore();
   return true;
 }
 
 function updateAnimations(delta) {
   runtime.elapsed += delta;
+  updateCameraTarget();
   updateEffects(delta);
   updateCamera(delta);
   updateOverlay(delta);
@@ -406,58 +493,117 @@ function applyCameraShake() {
   ctx.translate(offsetX, offsetY);
 }
 
+function tileVariant(x, y, count) {
+  return Math.abs((x * 31 + y * 17 + state.floor * 13) % count);
+}
+
+function drawFallbackTile(tile, sx, sy) {
+  ctx.fillStyle = tile === "#" ? "#111827" : "#202b44";
+  ctx.fillRect(sx, sy, TILE - 1, TILE - 1);
+}
+
+function drawTileSprite(tile, x, y) {
+  const group = tile === "#" ? sprites.tiles.wall : sprites.tiles.floor;
+  const sprite = group[tileVariant(x, y, group.length)];
+  const sx = gridToScreenX(x);
+  const sy = gridToScreenY(y);
+  const didDraw = drawSprite(sprite, sx, sy, TILE, TILE);
+  if (!didDraw) {
+    drawFallbackTile(tile, sx, sy);
+  }
+}
+
 function drawMapLayer() {
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
+  const startX = clamp(Math.floor(camera.x / TILE) - 1, 0, COLS - 1);
+  const endX = clamp(Math.ceil((camera.x + canvas.width) / TILE) + 1, 0, COLS);
+  const startY = clamp(Math.floor(camera.y / TILE) - 1, 0, ROWS - 1);
+  const endY = clamp(Math.ceil((camera.y + canvas.height) / TILE) + 1, 0, ROWS);
+
+  for (let y = startY; y < endY; y++) {
+    for (let x = startX; x < endX; x++) {
       const tile = state.map[y][x];
-      ctx.fillStyle = tile === "#" ? "#111827" : "#202b44";
-      ctx.fillRect(x * TILE, y * TILE, TILE - 1, TILE - 1);
+      drawTileSprite(tile, x, y);
     }
   }
 }
 
 function drawStairsLayer() {
-  ctx.fillStyle = "#93c5fd";
-  ctx.fillRect(
-    state.stairs.x * TILE + STAIRS_DRAW.offsetX,
-    state.stairs.y * TILE + STAIRS_DRAW.offsetY,
-    STAIRS_DRAW.w,
-    STAIRS_DRAW.h
+  const sx = gridToScreenX(state.stairs.x) + STAIRS_DRAW.offsetX;
+  const sy = gridToScreenY(state.stairs.y) + STAIRS_DRAW.offsetY;
+  const didDraw = drawSprite(
+    sprites.tiles.stairsDown,
+    gridToScreenX(state.stairs.x),
+    gridToScreenY(state.stairs.y),
+    TILE,
+    TILE
   );
+  if (!didDraw) {
+    ctx.fillStyle = "#93c5fd";
+    ctx.fillRect(sx, sy, STAIRS_DRAW.w, STAIRS_DRAW.h);
+  }
 }
 
 function drawItemLayer() {
 }
 
-function drawEnemyLayer() {
-  for (const e of state.enemies) {
-    if (e.hp <= 0) continue;
-    const sprite = sprites.monsters[e.sprite];
-    const didDraw = drawSprite(
-      sprite,
-      e.x * TILE + ENEMY_DRAW.offsetX,
-      e.y * TILE + ENEMY_DRAW.offsetY,
-      ENEMY_DRAW.w,
-      ENEMY_DRAW.h
-    );
-    if (!didDraw) {
-      drawMonsterShape(e);
+function actorFootY(actor) {
+  return gridToWorldY(actor.y) + TILE;
+}
+
+function actorDrawPosition(actor, draw) {
+  const footX = gridToWorldX(actor.x) + TILE / 2;
+  const footY = gridToWorldY(actor.y) + TILE;
+  return {
+    x: worldToScreenX(footX + draw.offsetX),
+    y: worldToScreenY(footY + draw.offsetY),
+  };
+}
+
+function drawEnemyActor(enemy) {
+  const draw = ENEMY_DRAW[enemy.sprite] || ENEMY_DRAW.fallback;
+  const position = actorDrawPosition(enemy, draw);
+  const sprite = sprites.monsters[enemy.sprite];
+  const didDraw = drawSprite(sprite, position.x, position.y, draw.w, draw.h);
+  if (!didDraw) {
+    drawMonsterShape(enemy, position.x, position.y, draw);
+  }
+}
+
+function drawPlayerActor() {
+  const sprite = sprites.player.idle[state.player.direction] || sprites.player.idle.down;
+  const position = actorDrawPosition(state.player, PLAYER_DRAW);
+  const didDraw = drawSprite(sprite, position.x, position.y, PLAYER_DRAW.w, PLAYER_DRAW.h);
+  if (!didDraw) {
+    drawPlayerShape(position.x, position.y);
+  }
+}
+
+function drawActorLayer() {
+  const actors = [
+    ...state.enemies.filter((e) => e.hp > 0).map((enemy) => ({ type: "enemy", actor: enemy })),
+    { type: "player", actor: state.player },
+  ];
+
+  actors.sort((a, b) => actorFootY(a.actor) - actorFootY(b.actor));
+
+  for (const entry of actors) {
+    if (entry.type === "player") {
+      drawPlayerActor();
+    } else {
+      drawEnemyActor(entry.actor);
     }
   }
 }
 
-function drawPlayerLayer() {
-  const sprite = sprites.player.idle[state.player.direction] || sprites.player.idle.down;
-  const didDraw = drawSprite(
-    sprite,
-    state.player.x * TILE + PLAYER_DRAW.offsetX,
-    state.player.y * TILE + PLAYER_DRAW.offsetY,
-    PLAYER_DRAW.w,
-    PLAYER_DRAW.h
-  );
-  if (!didDraw) {
-    drawPlayerShape();
+function drawEnemyLayer() {
+  for (const e of state.enemies) {
+    if (e.hp <= 0) continue;
+    drawEnemyActor(e);
   }
+}
+
+function drawPlayerLayer() {
+  drawPlayerActor();
 }
 
 function drawEffectsLayer() {
@@ -471,8 +617,8 @@ function drawEffectsLayer() {
 
     const progress = effect.age / effect.duration;
     const alpha = Math.max(0, 1 - progress);
-    const px = effect.x * TILE + TILE / 2;
-    const py = effect.y * TILE + 8 - progress * 14;
+    const px = worldToScreenX(gridToWorldX(effect.x) + TILE / 2);
+    const py = worldToScreenY(gridToWorldY(effect.y) + 8 - progress * 14);
 
     ctx.globalAlpha = alpha;
     ctx.fillStyle = "rgba(15, 23, 42, 0.8)";
@@ -503,8 +649,7 @@ function draw() {
   drawMapLayer();
   drawStairsLayer();
   drawItemLayer();
-  drawEnemyLayer();
-  drawPlayerLayer();
+  drawActorLayer();
   drawEffectsLayer();
   ctx.restore();
 

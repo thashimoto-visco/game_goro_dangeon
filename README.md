@@ -14,15 +14,20 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 ## 仕様（現状）
 
 - ランダム生成の部屋＋通路マップ
+- 画面より広いマップをプレイヤー追従カメラでスクロール表示
 - モンスターとのターン制戦闘
 - 満腹度システム（0になると毎ターンダメージ）
-- 簡易ステータス表示とログ
+- SFC風のステータス表示とログ
 - 吾郎のアセット画像: `assets/goro.svg`
 
 - 参照用ラスタ画像: `assets/goro_reference_1.svg`
 - 参照用ラスタ画像（2枚目）: `assets/goro_reference_2.svg`
 
 - 吾郎スプライトシート: `assets/goro_sprite_sheet.svg`
+- 吾郎素材スプライトシート: `assets/materials/spritesheet.webp`
 - モンスター画像: `assets/monster_slime.svg`, `assets/monster_bat.svg`, `assets/monster_golem.svg`
 
 - ゲーム内プレイヤー画像: `assets/goro_player.svg`
+
+- タイル画像: `assets/tiles/floor_01.svg`, `assets/tiles/floor_02.svg`, `assets/tiles/floor_03.svg`, `assets/tiles/wall_01.svg`, `assets/tiles/wall_02.svg`, `assets/tiles/wall_03.svg`, `assets/tiles/stairs_down.svg`
+- 仮アイコン画像: `assets/icons/item_weapon.svg`, `assets/icons/item_food.svg`, `assets/icons/item_potion.svg`
