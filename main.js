@@ -73,6 +73,12 @@ const sprites = {
         { image: images.goro, x: 619, y: 213, w: 106, h: 198 },
       ],
     },
+    attack: {
+      down: { image: images.goro, x: 424, y: 1045, w: 112, h: 198 },
+      up: { image: images.goro, x: 424, y: 1045, w: 112, h: 198 },
+      left: { image: images.goro, x: 820, y: 1461, w: 88, h: 198, flipX: true },
+      right: { image: images.goro, x: 820, y: 1461, w: 88, h: 198 },
+    },
   },
   tiles: {
     floor: [
@@ -135,6 +141,7 @@ const state = {
   map: [],
   enemies: [],
   stairs: { x: 0, y: 0 },
+  action: null,
   player: {
     x: 2,
     y: 2,
@@ -202,12 +209,23 @@ function directionFromDelta(dx, dy) {
   return state.player.direction;
 }
 
+function directionToDelta(direction) {
+  if (direction === "right") return { dx: 1, dy: 0 };
+  if (direction === "left") return { dx: -1, dy: 0 };
+  if (direction === "down") return { dx: 0, dy: 1 };
+  return { dx: 0, dy: -1 };
+}
+
+function directionBetween(from, to) {
+  return directionFromDelta(Math.sign(to.x - from.x), Math.sign(to.y - from.y));
+}
+
 function setPlayerDirection(dx, dy) {
   state.player.direction = directionFromDelta(dx, dy);
 }
 
 function canAcceptInput() {
-  return true;
+  return !state.action;
 }
 
 function startPlayerWalk(fromX, fromY, toX, toY) {
@@ -238,7 +256,24 @@ function updatePlayerMotion(delta) {
 
 function getPlayerVisualGrid() {
   const motion = state.player.motion;
-  if (!motion || motion.type !== "walk") {
+  if (!motion) {
+    return { x: state.player.x, y: state.player.y, progress: 1, walking: false };
+  }
+
+  if (motion.type === "attack") {
+    const progress = clamp(motion.age / motion.duration, 0, 1);
+    const lunge = progress < 0.5 ? progress * 2 * 0.32 : (1 - progress) * 2 * 0.32;
+    const delta = directionToDelta(motion.direction);
+    return {
+      x: state.player.x + delta.dx * lunge,
+      y: state.player.y + delta.dy * lunge,
+      progress,
+      walking: false,
+      attacking: true,
+    };
+  }
+
+  if (motion.type !== "walk") {
     return { x: state.player.x, y: state.player.y, progress: 1, walking: false };
   }
 
@@ -255,6 +290,10 @@ function getPlayerVisualGrid() {
 function getPlayerSprite() {
   const direction = state.player.direction;
   const visual = getPlayerVisualGrid();
+  if (visual.attacking) {
+    return sprites.player.attack[direction] || sprites.player.attack.down;
+  }
+
   if (!visual.walking) {
     return sprites.player.idle[direction] || sprites.player.idle.down;
   }
@@ -276,6 +315,37 @@ function addFloatingText(text, x, y, color = "#ffffff") {
   });
 }
 
+function addSlashEffect(x, y, direction) {
+  effects.push({
+    type: "slash",
+    x,
+    y,
+    direction,
+    age: 0,
+    duration: 140,
+  });
+}
+
+function addImpactEffect(x, y) {
+  effects.push({
+    type: "impact",
+    x,
+    y,
+    age: 0,
+    duration: 140,
+  });
+}
+
+function addDefeatEffect(x, y) {
+  effects.push({
+    type: "defeat",
+    x,
+    y,
+    age: 0,
+    duration: 300,
+  });
+}
+
 function startCameraShake(duration = 120, strength = 2) {
   camera.shakeTime = duration;
   camera.shakeDuration = duration;
@@ -290,6 +360,7 @@ function startFlash(color = "rgba(255,255,255,0.25)", duration = 120) {
 
 function clearTransientVisuals() {
   effects.length = 0;
+  state.action = null;
   clearPlayerMotion();
   camera.x = 0;
   camera.y = 0;
@@ -341,6 +412,7 @@ function generateFloor() {
   }
 
   state.map = map;
+  state.action = null;
   const start = rooms[0];
   state.player.x = start.cx;
   state.player.y = start.cy;
@@ -378,31 +450,118 @@ function enemyAt(x, y) {
   return state.enemies.find((e) => e.x === x && e.y === y && e.hp > 0);
 }
 
-function combat(enemy) {
-  const playerDmg = Math.max(1, state.player.atk + rng(0, 2));
-  enemy.hp -= playerDmg;
-  addFloatingText(String(playerDmg), enemy.x, enemy.y, "#fde68a");
-  addLog(`${enemy.name}に${playerDmg}ダメージ。`);
+function buildPlayerAttackResult(enemy) {
+  const damage = Math.max(1, state.player.atk + rng(0, 2));
+  const killed = enemy.hp - damage <= 0;
+  const counterDamage = killed ? 0 : Math.max(1, enemy.atk - state.player.def + rng(0, 1));
+  return { damage, killed, counterDamage };
+}
+
+function startPlayerAttack(enemy) {
+  const direction = directionBetween(state.player, enemy);
+  state.player.direction = direction;
+  const result = buildPlayerAttackResult(enemy);
+  const duration = result.killed ? 300 : 430;
+  state.action = {
+    type: "playerAttack",
+    age: 0,
+    duration,
+    target: enemy,
+    direction,
+    result,
+    appliedSlash: false,
+    appliedHit: false,
+    appliedCounter: false,
+  };
+  state.player.motion = {
+    type: "attack",
+    age: 0,
+    duration: 240,
+    direction,
+  };
+}
+
+function finishAction() {
+  const finished = state.action;
+  state.action = null;
+  clearPlayerMotion();
+
+  if (finished && finished.type === "playerAttack") {
+    tickTurn({ skipEnemy: finished.target });
+  }
+}
+
+function applyPlayerAttackHit(action) {
+  if (action.appliedHit) return;
+
+  const enemy = action.target;
+  action.appliedHit = true;
+  if (!enemy || enemy.hp <= 0) return;
+
+  enemy.hp -= action.result.damage;
+  enemy.hitTime = 180;
+  enemy.hitDuration = 180;
+  enemy.hitDirection = action.direction;
+  addImpactEffect(enemy.x, enemy.y);
+  addFloatingText(String(action.result.damage), enemy.x, enemy.y, "#fde68a");
+  startCameraShake(90, action.result.killed ? 4 : 2);
+  addLog(`${enemy.name}に${action.result.damage}ダメージ。`);
+
   if (enemy.hp <= 0) {
     state.player.exp += 3;
+    addDefeatEffect(enemy.x, enemy.y);
     addFloatingText("撃破", enemy.x, enemy.y, "#fca5a5");
     addLog(`${enemy.name}をたおした！`);
-    return;
   }
+}
 
-  const enemyDmg = Math.max(1, enemy.atk - state.player.def + rng(0, 1));
-  state.player.hp -= enemyDmg;
-  addFloatingText(String(enemyDmg), state.player.x, state.player.y, "#fb7185");
+function applyEnemyCounter(action) {
+  if (action.appliedCounter || action.result.killed) return;
+
+  const enemy = action.target;
+  action.appliedCounter = true;
+  if (!enemy || enemy.hp <= 0 || state.player.hp <= 0) return;
+
+  enemy.counterTime = 140;
+  enemy.counterDuration = 140;
+  enemy.counterDirection = directionBetween(enemy, state.player);
+  state.player.hp -= action.result.counterDamage;
+  addFloatingText(String(action.result.counterDamage), state.player.x, state.player.y, "#fb7185");
   startCameraShake();
   startFlash("rgba(239,68,68,0.22)", 120);
-  addLog(`吾郎は${enemyDmg}ダメージを受けた。`);
+  addLog(`${enemy.name}の反撃！ 吾郎は${action.result.counterDamage}ダメージを受けた。`);
   if (state.player.hp <= 0) {
     addLog("吾郎は力尽きた… Rキーで再開。");
   }
 }
 
-function moveEnemies() {
+function updateAction(delta) {
+  const action = state.action;
+  if (!action) return;
+
+  action.age += delta;
+
+  if (action.type === "playerAttack") {
+    if (!action.appliedSlash && action.age >= 70) {
+      action.appliedSlash = true;
+      addSlashEffect(action.target.x, action.target.y, action.direction);
+    }
+    if (action.age >= 95) {
+      applyPlayerAttackHit(action);
+    }
+    if (action.age >= 280) {
+      applyEnemyCounter(action);
+    }
+  }
+
+  if (action.age >= action.duration) {
+    finishAction();
+  }
+}
+
+function moveEnemies(options = {}) {
   for (const e of state.enemies) {
+    if (options.skipEnemy === e) continue;
     if (e.hp <= 0) continue;
     const dx = Math.sign(state.player.x - e.x);
     const dy = Math.sign(state.player.y - e.y);
@@ -426,14 +585,16 @@ function moveEnemies() {
   }
 }
 
-function tickTurn() {
+function tickTurn(options = {}) {
   if (state.player.hp <= 0) return;
   state.player.hunger = Math.max(0, state.player.hunger - 1);
   if (state.player.hunger === 0) {
     state.player.hp = Math.max(0, state.player.hp - 1);
     addLog("満腹度が0！ 空腹ダメージ。");
   }
-  moveEnemies();
+  if (!options.skipEnemies) {
+    moveEnemies(options);
+  }
 }
 
 function tryMove(dx, dy) {
@@ -444,8 +605,7 @@ function tryMove(dx, dy) {
 
   const e = enemyAt(nx, ny);
   if (e) {
-    combat(e);
-    tickTurn();
+    startPlayerAttack(e);
     return;
   }
 
@@ -539,10 +699,19 @@ function drawSprite(sprite, dx, dy, dw, dh) {
 function updateAnimations(delta) {
   runtime.elapsed += delta;
   updatePlayerMotion(delta);
+  updateAction(delta);
+  updateEnemyReactions(delta);
   updateCameraTarget();
   updateEffects(delta);
   updateCamera(delta);
   updateOverlay(delta);
+}
+
+function updateEnemyReactions(delta) {
+  for (const enemy of state.enemies) {
+    enemy.hitTime = Math.max(0, (enemy.hitTime || 0) - delta);
+    enemy.counterTime = Math.max(0, (enemy.counterTime || 0) - delta);
+  }
 }
 
 function updateEffects(delta) {
@@ -639,9 +808,27 @@ function actorDrawPosition(actor, draw) {
   const visual = actor === state.player ? getPlayerVisualGrid() : actor;
   const footX = gridToWorldX(visual.x) + TILE / 2;
   const footY = gridToWorldY(visual.y) + TILE;
+  let reactionX = 0;
+  let reactionY = 0;
+
+  if (actor !== state.player && actor.hitTime > 0) {
+    const progress = actor.hitTime / Math.max(1, actor.hitDuration || 1);
+    const direction = directionToDelta(actor.hitDirection || "down");
+    reactionX -= direction.dx * 5 * progress;
+    reactionY -= direction.dy * 5 * progress;
+  }
+
+  if (actor !== state.player && actor.counterTime > 0) {
+    const progress = actor.counterTime / Math.max(1, actor.counterDuration || 1);
+    const direction = directionToDelta(actor.counterDirection || "down");
+    const lunge = progress > 0.5 ? (1 - progress) * 2 * 0.24 : progress * 2 * 0.24;
+    reactionX += direction.dx * TILE * lunge;
+    reactionY += direction.dy * TILE * lunge;
+  }
+
   return {
-    x: worldToScreenX(footX + draw.offsetX),
-    y: worldToScreenY(footY + draw.offsetY),
+    x: worldToScreenX(footX + draw.offsetX + reactionX),
+    y: worldToScreenY(footY + draw.offsetY + reactionY),
   };
 }
 
@@ -649,10 +836,15 @@ function drawEnemyActor(enemy) {
   const draw = ENEMY_DRAW[enemy.sprite] || ENEMY_DRAW.fallback;
   const position = actorDrawPosition(enemy, draw);
   const sprite = sprites.monsters[enemy.sprite];
+  ctx.save();
+  if (enemy.hitTime > 0 && Math.floor(enemy.hitTime / 45) % 2 === 0) {
+    ctx.globalAlpha = 0.55;
+  }
   const didDraw = drawSprite(sprite, position.x, position.y, draw.w, draw.h);
   if (!didDraw) {
     drawMonsterShape(enemy, position.x, position.y, draw);
   }
+  ctx.restore();
 }
 
 function drawPlayerActor() {
@@ -692,6 +884,75 @@ function drawPlayerLayer() {
   drawPlayerActor();
 }
 
+function effectScreenCenter(effect) {
+  return {
+    x: worldToScreenX(gridToWorldX(effect.x) + TILE / 2),
+    y: worldToScreenY(gridToWorldY(effect.y) + TILE / 2),
+  };
+}
+
+function drawSlashEffect(effect) {
+  const progress = effect.age / effect.duration;
+  const alpha = Math.max(0, 1 - progress);
+  const center = effectScreenCenter(effect);
+  const angles = {
+    right: [-0.8, 0.8],
+    left: [Math.PI - 0.8, Math.PI + 0.8],
+    down: [0.8, Math.PI - 0.8],
+    up: [Math.PI + 0.8, Math.PI * 2 - 0.8],
+  };
+  const [start, end] = angles[effect.direction] || angles.down;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = "rgba(255, 244, 214, 0.95)";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, 18 + progress * 5, start, end);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(251, 191, 36, 0.7)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, 11 + progress * 6, start, end);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawImpactEffect(effect) {
+  const progress = effect.age / effect.duration;
+  const alpha = Math.max(0, 1 - progress);
+  const center = effectScreenCenter(effect);
+  const radius = 5 + progress * 12;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = "#fef3c7";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(center.x - radius, center.y);
+  ctx.lineTo(center.x + radius, center.y);
+  ctx.moveTo(center.x, center.y - radius);
+  ctx.lineTo(center.x, center.y + radius);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawDefeatEffect(effect) {
+  const progress = effect.age / effect.duration;
+  const alpha = Math.max(0, 1 - progress);
+  const center = effectScreenCenter(effect);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = "#fca5a5";
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI * 2 * i) / 6;
+    const distance = 6 + progress * 18;
+    ctx.fillRect(center.x + Math.cos(angle) * distance, center.y + Math.sin(angle) * distance, 4, 4);
+  }
+  ctx.restore();
+}
+
 function drawEffectsLayer() {
   ctx.save();
   ctx.textAlign = "center";
@@ -699,6 +960,21 @@ function drawEffectsLayer() {
   ctx.font = "bold 12px 'Yu Gothic UI', sans-serif";
 
   for (const effect of effects) {
+    if (effect.type === "slash") {
+      drawSlashEffect(effect);
+      continue;
+    }
+
+    if (effect.type === "impact") {
+      drawImpactEffect(effect);
+      continue;
+    }
+
+    if (effect.type === "defeat") {
+      drawDefeatEffect(effect);
+      continue;
+    }
+
     if (effect.type !== "floatingText") continue;
 
     const progress = effect.age / effect.duration;
@@ -766,7 +1042,7 @@ window.addEventListener("keydown", (event) => {
   if (key === "arrowdown" || key === "s") tryMove(0, 1);
   if (key === "arrowleft" || key === "a") tryMove(-1, 0);
   if (key === "arrowright" || key === "d") tryMove(1, 0);
-  if (key === " ") tickTurn();
+  if (key === " " && canAcceptInput()) tickTurn();
   if (key === "r" && state.player.hp <= 0) {
     state.floor = 1;
     state.player.hp = state.player.maxHp;
