@@ -1,21 +1,63 @@
 const TILE = 32;
 const COLS = 20;
 const ROWS = 15;
+const MAX_DELTA = 100;
+const PLAYER_DRAW = { offsetX: 5, offsetY: -4, w: 22, h: 36 };
+const ENEMY_DRAW = { offsetX: 4, offsetY: 4, w: 24, h: 24 };
+const STAIRS_DRAW = { offsetX: 8, offsetY: 8, w: 16, h: 16 };
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
-const goroImage = new Image();
-goroImage.src = "assets/goro_sprite_sheet.svg";
-const goroSprite = { x: 80, y: 70, w: 128, h: 176 };
 
-const monsterSprites = {
-  slime: new Image(),
-  bat: new Image(),
-  golem: new Image(),
+function createImage(src) {
+  const image = new Image();
+  image.src = src;
+  return image;
+}
+
+const images = {
+  goro: createImage("assets/materials/spritesheet.webp"),
+  monsters: {
+    slime: createImage("assets/monster_slime.svg"),
+    bat: createImage("assets/monster_bat.svg"),
+    golem: createImage("assets/monster_golem.svg"),
+  },
 };
-monsterSprites.slime.src = "assets/monster_slime.svg";
-monsterSprites.bat.src = "assets/monster_bat.svg";
-monsterSprites.golem.src = "assets/monster_golem.svg";
+
+const sprites = {
+  player: {
+    idle: {
+      down: { image: images.goro, x: 52, y: 5, w: 87, h: 185 },
+      up: { image: images.goro, x: 52, y: 5, w: 87, h: 185 },
+      left: { image: images.goro, x: 52, y: 5, w: 87, h: 185 },
+      right: { image: images.goro, x: 52, y: 5, w: 87, h: 185 },
+    },
+  },
+  monsters: {
+    slime: { image: images.monsters.slime },
+    bat: { image: images.monsters.bat },
+    golem: { image: images.monsters.golem },
+  },
+};
+
+const runtime = {
+  lastTime: 0,
+  elapsed: 0,
+};
+
+const effects = [];
+
+const camera = {
+  shakeTime: 0,
+  shakeDuration: 0,
+  shakeStrength: 0,
+};
+
+const overlay = {
+  flashTime: 0,
+  flashDuration: 0,
+  flashColor: "rgba(255,255,255,0)",
+};
 
 const ui = {
   floor: document.getElementById("floor"),
@@ -35,6 +77,7 @@ const state = {
   player: {
     x: 2,
     y: 2,
+    direction: "down",
     hp: 20,
     maxHp: 20,
     atk: 5,
@@ -55,6 +98,58 @@ function addLog(text) {
   while (ui.log.children.length > 12) {
     ui.log.removeChild(ui.log.lastChild);
   }
+}
+
+function isImageReady(image) {
+  return image && image.complete && image.naturalWidth > 0;
+}
+
+function directionFromDelta(dx, dy) {
+  if (dx > 0) return "right";
+  if (dx < 0) return "left";
+  if (dy > 0) return "down";
+  if (dy < 0) return "up";
+  return state.player.direction;
+}
+
+function setPlayerDirection(dx, dy) {
+  state.player.direction = directionFromDelta(dx, dy);
+}
+
+function canAcceptInput() {
+  return true;
+}
+
+function addFloatingText(text, x, y, color = "#ffffff") {
+  effects.push({
+    type: "floatingText",
+    text,
+    x,
+    y,
+    age: 0,
+    duration: 650,
+    color,
+  });
+}
+
+function startCameraShake(duration = 120, strength = 2) {
+  camera.shakeTime = duration;
+  camera.shakeDuration = duration;
+  camera.shakeStrength = strength;
+}
+
+function startFlash(color = "rgba(255,255,255,0.25)", duration = 120) {
+  overlay.flashTime = duration;
+  overlay.flashDuration = duration;
+  overlay.flashColor = color;
+}
+
+function clearTransientVisuals() {
+  effects.length = 0;
+  camera.shakeTime = 0;
+  camera.shakeDuration = 0;
+  overlay.flashTime = 0;
+  overlay.flashDuration = 0;
 }
 
 function carveRoom(map, x, y, w, h) {
@@ -126,15 +221,20 @@ function enemyAt(x, y) {
 function combat(enemy) {
   const playerDmg = Math.max(1, state.player.atk + rng(0, 2));
   enemy.hp -= playerDmg;
+  addFloatingText(String(playerDmg), enemy.x, enemy.y, "#fde68a");
   addLog(`${enemy.name}に${playerDmg}ダメージ。`);
   if (enemy.hp <= 0) {
     state.player.exp += 3;
+    addFloatingText("撃破", enemy.x, enemy.y, "#fca5a5");
     addLog(`${enemy.name}をたおした！`);
     return;
   }
 
   const enemyDmg = Math.max(1, enemy.atk - state.player.def + rng(0, 1));
   state.player.hp -= enemyDmg;
+  addFloatingText(String(enemyDmg), state.player.x, state.player.y, "#fb7185");
+  startCameraShake();
+  startFlash("rgba(239,68,68,0.22)", 120);
   addLog(`吾郎は${enemyDmg}ダメージを受けた。`);
   if (state.player.hp <= 0) {
     addLog("吾郎は力尽きた… Rキーで再開。");
@@ -152,6 +252,9 @@ function moveEnemies() {
     if (state.player.x === nx && state.player.y === ny) {
       const enemyDmg = Math.max(1, e.atk - state.player.def + rng(0, 1));
       state.player.hp -= enemyDmg;
+      addFloatingText(String(enemyDmg), state.player.x, state.player.y, "#fb7185");
+      startCameraShake();
+      startFlash("rgba(239,68,68,0.22)", 120);
       addLog(`${e.name}の攻撃！ ${enemyDmg}ダメージ。`);
       continue;
     }
@@ -174,7 +277,8 @@ function tickTurn() {
 }
 
 function tryMove(dx, dy) {
-  if (state.player.hp <= 0) return;
+  if (!canAcceptInput() || state.player.hp <= 0) return;
+  setPlayerDirection(dx, dy);
   const nx = state.player.x + dx;
   const ny = state.player.y + dy;
 
@@ -253,9 +357,56 @@ function drawPlayerShape() {
   ctx.fillRect(px + 18, py + 10, 2, 2);
 }
 
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+function drawSprite(sprite, dx, dy, dw, dh) {
+  if (!sprite || !isImageReady(sprite.image)) return false;
 
+  if (Number.isFinite(sprite.x)) {
+    ctx.drawImage(sprite.image, sprite.x, sprite.y, sprite.w, sprite.h, dx, dy, dw, dh);
+  } else {
+    ctx.drawImage(sprite.image, dx, dy, dw, dh);
+  }
+
+  return true;
+}
+
+function updateAnimations(delta) {
+  runtime.elapsed += delta;
+  updateEffects(delta);
+  updateCamera(delta);
+  updateOverlay(delta);
+}
+
+function updateEffects(delta) {
+  for (const effect of effects) {
+    effect.age += delta;
+  }
+
+  for (let i = effects.length - 1; i >= 0; i--) {
+    if (effects[i].age >= effects[i].duration) {
+      effects.splice(i, 1);
+    }
+  }
+}
+
+function updateCamera(delta) {
+  camera.shakeTime = Math.max(0, camera.shakeTime - delta);
+}
+
+function updateOverlay(delta) {
+  overlay.flashTime = Math.max(0, overlay.flashTime - delta);
+}
+
+function applyCameraShake() {
+  if (camera.shakeTime <= 0 || camera.shakeStrength <= 0) return;
+
+  const progress = camera.shakeTime / Math.max(1, camera.shakeDuration);
+  const strength = camera.shakeStrength * progress;
+  const offsetX = (Math.random() * 2 - 1) * strength;
+  const offsetY = (Math.random() * 2 - 1) * strength;
+  ctx.translate(offsetX, offsetY);
+}
+
+function drawMapLayer() {
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
       const tile = state.map[y][x];
@@ -263,35 +414,101 @@ function draw() {
       ctx.fillRect(x * TILE, y * TILE, TILE - 1, TILE - 1);
     }
   }
+}
 
+function drawStairsLayer() {
   ctx.fillStyle = "#93c5fd";
-  ctx.fillRect(state.stairs.x * TILE + 8, state.stairs.y * TILE + 8, 16, 16);
+  ctx.fillRect(
+    state.stairs.x * TILE + STAIRS_DRAW.offsetX,
+    state.stairs.y * TILE + STAIRS_DRAW.offsetY,
+    STAIRS_DRAW.w,
+    STAIRS_DRAW.h
+  );
+}
 
+function drawItemLayer() {
+}
+
+function drawEnemyLayer() {
   for (const e of state.enemies) {
     if (e.hp <= 0) continue;
-    const sprite = monsterSprites[e.sprite];
-    if (sprite && sprite.complete && sprite.naturalWidth > 0) {
-      ctx.drawImage(sprite, e.x * TILE + 4, e.y * TILE + 4, 24, 24);
-    } else {
+    const sprite = sprites.monsters[e.sprite];
+    const didDraw = drawSprite(
+      sprite,
+      e.x * TILE + ENEMY_DRAW.offsetX,
+      e.y * TILE + ENEMY_DRAW.offsetY,
+      ENEMY_DRAW.w,
+      ENEMY_DRAW.h
+    );
+    if (!didDraw) {
       drawMonsterShape(e);
     }
   }
+}
 
-  if (goroImage.complete && goroImage.naturalWidth > 0) {
-    ctx.drawImage(
-      goroImage,
-      goroSprite.x,
-      goroSprite.y,
-      goroSprite.w,
-      goroSprite.h,
-      state.player.x * TILE + 5,
-      state.player.y * TILE + 1,
-      22,
-      30
-    );
-  } else {
+function drawPlayerLayer() {
+  const sprite = sprites.player.idle[state.player.direction] || sprites.player.idle.down;
+  const didDraw = drawSprite(
+    sprite,
+    state.player.x * TILE + PLAYER_DRAW.offsetX,
+    state.player.y * TILE + PLAYER_DRAW.offsetY,
+    PLAYER_DRAW.w,
+    PLAYER_DRAW.h
+  );
+  if (!didDraw) {
     drawPlayerShape();
   }
+}
+
+function drawEffectsLayer() {
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "bold 12px 'Yu Gothic UI', sans-serif";
+
+  for (const effect of effects) {
+    if (effect.type !== "floatingText") continue;
+
+    const progress = effect.age / effect.duration;
+    const alpha = Math.max(0, 1 - progress);
+    const px = effect.x * TILE + TILE / 2;
+    const py = effect.y * TILE + 8 - progress * 14;
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "rgba(15, 23, 42, 0.8)";
+    ctx.fillText(effect.text, px + 1, py + 1);
+    ctx.fillStyle = effect.color;
+    ctx.fillText(effect.text, px, py);
+  }
+
+  ctx.restore();
+}
+
+function drawOverlayLayer() {
+  if (overlay.flashTime <= 0) return;
+
+  const progress = overlay.flashTime / Math.max(1, overlay.flashDuration);
+  ctx.save();
+  ctx.globalAlpha = progress;
+  ctx.fillStyle = overlay.flashColor;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  applyCameraShake();
+  drawMapLayer();
+  drawStairsLayer();
+  drawItemLayer();
+  drawEnemyLayer();
+  drawPlayerLayer();
+  drawEffectsLayer();
+  ctx.restore();
+
+  drawOverlayLayer();
 }
 
 function updateUi() {
@@ -303,7 +520,10 @@ function updateUi() {
   ui.exp.textContent = state.player.exp;
 }
 
-function loop() {
+function loop(timestamp = 0) {
+  const delta = runtime.lastTime === 0 ? 0 : Math.min(MAX_DELTA, timestamp - runtime.lastTime);
+  runtime.lastTime = timestamp;
+  updateAnimations(delta);
   draw();
   updateUi();
   requestAnimationFrame(loop);
@@ -321,6 +541,8 @@ window.addEventListener("keydown", (event) => {
     state.player.hp = state.player.maxHp;
     state.player.hunger = 100;
     state.player.exp = 0;
+    state.player.direction = "down";
+    clearTransientVisuals();
     addLog("再挑戦！");
     generateFloor();
   }
@@ -328,4 +550,4 @@ window.addEventListener("keydown", (event) => {
 
 generateFloor();
 addLog("ダンジョンに入った。階段を目指そう。青いマスが階段だ。");
-loop();
+requestAnimationFrame(loop);
