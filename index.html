@@ -9,7 +9,10 @@
   <body>
     <main class="layout">
       <section class="game-panel">
-        <h1>吾郎の不思議なダンジョン</h1>
+        <div class="game-header">
+          <h1>吾郎の不思議なダンジョン</h1>
+          <button id="sound-toggle" class="sound-toggle" type="button" aria-pressed="false">音 OFF</button>
+        </div>
         <p class="subtitle">矢印キー or WASD で移動 / <kbd>Space</kbd> で足踏み / <kbd>1</kbd>-<kbd>9</kbd> で持ち物使用</p>
         <canvas id="game" width="640" height="480" aria-label="ゲーム画面"></canvas>
       </section>

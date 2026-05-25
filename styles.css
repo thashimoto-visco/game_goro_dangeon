@@ -35,6 +35,35 @@ h2 {
   margin: 0.1rem 0 0.7rem;
 }
 
+.game-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.sound-toggle {
+  min-width: 5.5rem;
+  padding: 0.35rem 0.55rem;
+  border: 2px solid #d6b15f;
+  border-radius: 4px;
+  background: #090d14;
+  color: #facc15;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sound-toggle[aria-pressed="true"] {
+  background: #1f2937;
+  color: #f8fafc;
+}
+
+.sound-toggle:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
 .subtitle {
   margin-top: 0;
   color: #c8d3f0;

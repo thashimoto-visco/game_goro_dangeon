@@ -141,6 +141,29 @@ const itemTypes = {
   },
 };
 
+const monsterTypes = [
+  { key: "slime", name: "ぬるりスライム", baseHp: 5, baseAtk: 2, hpScale: 1, atkScale: 0.35 },
+  { key: "bat", name: "バサバサコウモリ", baseHp: 4, baseAtk: 3, hpScale: 0.8, atkScale: 0.45 },
+  { key: "golem", name: "ゴロ岩ゴーレム", baseHp: 9, baseAtk: 4, hpScale: 1.4, atkScale: 0.6 },
+];
+
+const itemDropTable = [
+  { type: "riceBall", weight: 32 },
+  { type: "herb", weight: 34 },
+  { type: "woodenSword", weight: 24 },
+  { type: "ironSword", weight: 10 },
+];
+
+const defeatReasons = {
+  hunger: "吾郎は空腹で倒れた",
+  enemy: {
+    slime: "吾郎はぬるぬるになった",
+    bat: "吾郎はバサバサになった",
+    golem: "吾郎はゴロ岩につぶされてしまった",
+  },
+  fallbackEnemy: "吾郎は力尽きた",
+};
+
 let nextItemId = 1;
 let inventoryRenderKey = "";
 
@@ -160,6 +183,14 @@ const overlay = {
   flashColor: "rgba(255,255,255,0)",
 };
 
+const sound = {
+  context: null,
+  master: null,
+  muted: true,
+  musicTimer: null,
+  musicStep: 0,
+};
+
 const ui = {
   floor: document.getElementById("floor"),
   hp: document.getElementById("hp"),
@@ -169,6 +200,7 @@ const ui = {
   exp: document.getElementById("exp"),
   weapon: document.getElementById("weapon"),
   inventory: document.getElementById("inventory"),
+  soundToggle: document.getElementById("sound-toggle"),
   log: document.getElementById("log"),
 };
 
@@ -179,6 +211,16 @@ const state = {
   items: [],
   stairs: { x: 0, y: 0 },
   action: null,
+  gameOver: {
+    active: false,
+    age: 0,
+    duration: 900,
+    reason: "",
+  },
+  stats: {
+    turns: 0,
+    defeated: 0,
+  },
   player: {
     x: 2,
     y: 2,
@@ -237,6 +279,122 @@ function addLog(text) {
   }
 }
 
+function ensureAudioContext() {
+  if (!sound.context) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    sound.context = new AudioContextClass();
+    sound.master = sound.context.createGain();
+    sound.master.gain.value = 0.16;
+    sound.master.connect(sound.context.destination);
+  }
+
+  if (sound.context.state === "suspended") {
+    sound.context.resume();
+  }
+
+  return sound.context;
+}
+
+function setSoundMuted(muted) {
+  sound.muted = muted;
+  if (ui.soundToggle) {
+    ui.soundToggle.textContent = muted ? "音 OFF" : "音 ON";
+    ui.soundToggle.setAttribute("aria-pressed", String(!muted));
+  }
+
+  if (muted) {
+    stopMusic();
+  } else {
+    ensureAudioContext();
+    startMusic();
+  }
+}
+
+function playTone(frequency, duration = 0.08, type = "square", volume = 0.18, delay = 0) {
+  if (sound.muted) return;
+  const audio = ensureAudioContext();
+  if (!audio || !sound.master) return;
+
+  const start = audio.currentTime + delay;
+  const oscillator = audio.createOscillator();
+  const gain = audio.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, start);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(volume, start + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  oscillator.connect(gain);
+  gain.connect(sound.master);
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.02);
+}
+
+function playSound(name) {
+  if (sound.muted) return;
+
+  if (name === "move") {
+    playTone(130, 0.035, "square", 0.05);
+    return;
+  }
+  if (name === "attack") {
+    playTone(220, 0.06, "sawtooth", 0.09);
+    playTone(160, 0.05, "square", 0.06, 0.035);
+    return;
+  }
+  if (name === "hit") {
+    playTone(520, 0.045, "square", 0.11);
+    return;
+  }
+  if (name === "damage") {
+    playTone(96, 0.12, "sawtooth", 0.1);
+    return;
+  }
+  if (name === "defeat") {
+    playTone(420, 0.08, "square", 0.1);
+    playTone(260, 0.1, "square", 0.09, 0.08);
+    return;
+  }
+  if (name === "pickup") {
+    playTone(440, 0.06, "square", 0.08);
+    playTone(660, 0.07, "square", 0.08, 0.06);
+    return;
+  }
+  if (name === "use") {
+    playTone(392, 0.06, "triangle", 0.08);
+    playTone(523, 0.08, "triangle", 0.08, 0.055);
+    return;
+  }
+  if (name === "stairs") {
+    playTone(330, 0.06, "square", 0.08);
+    playTone(494, 0.06, "square", 0.08, 0.06);
+    playTone(659, 0.08, "square", 0.08, 0.12);
+    return;
+  }
+  if (name === "gameOver") {
+    playTone(220, 0.14, "sawtooth", 0.1);
+    playTone(165, 0.16, "sawtooth", 0.1, 0.14);
+    playTone(110, 0.28, "sawtooth", 0.1, 0.3);
+  }
+}
+
+function startMusic() {
+  if (sound.musicTimer || sound.muted) return;
+  const notes = [110, 146.83, 164.81, 196, 164.81, 146.83];
+  sound.musicTimer = window.setInterval(() => {
+    if (sound.muted) return;
+    const note = notes[sound.musicStep % notes.length];
+    playTone(note, 0.16, "triangle", 0.025);
+    sound.musicStep += 1;
+  }, 420);
+}
+
+function stopMusic() {
+  if (!sound.musicTimer) return;
+  window.clearInterval(sound.musicTimer);
+  sound.musicTimer = null;
+}
+
 function isImageReady(image) {
   return image && image.complete && image.naturalWidth > 0;
 }
@@ -265,7 +423,7 @@ function setPlayerDirection(dx, dy) {
 }
 
 function canAcceptInput() {
-  return !state.action;
+  return !state.action && !state.gameOver.active;
 }
 
 function startPlayerWalk(fromX, fromY, toX, toY) {
@@ -401,6 +559,9 @@ function startFlash(color = "rgba(255,255,255,0.25)", duration = 120) {
 function clearTransientVisuals() {
   effects.length = 0;
   state.action = null;
+  state.gameOver.active = false;
+  state.gameOver.age = 0;
+  state.gameOver.reason = "";
   clearPlayerMotion();
   camera.x = 0;
   camera.y = 0;
@@ -408,6 +569,45 @@ function clearTransientVisuals() {
   camera.shakeDuration = 0;
   overlay.flashTime = 0;
   overlay.flashDuration = 0;
+}
+
+function currentWeaponName() {
+  const weapon = equippedWeapon();
+  return weapon ? itemTypes[weapon.type].name : "なし";
+}
+
+function defeatReasonFromEnemy(enemy) {
+  if (!enemy) return defeatReasons.fallbackEnemy;
+  return defeatReasons.enemy[enemy.sprite] || `${enemy.name}に倒された`;
+}
+
+function startGameOver(reason) {
+  if (state.gameOver.active) return;
+
+  state.player.hp = 0;
+  state.action = null;
+  clearPlayerMotion();
+  state.gameOver.active = true;
+  state.gameOver.age = 0;
+  state.gameOver.reason = reason;
+  playSound("gameOver");
+  startCameraShake(260, 6);
+  startFlash("rgba(185, 28, 28, 0.42)", 260);
+  addLog(`${reason} Rキーで再挑戦。`);
+}
+
+function handlePlayerDefeat(reason) {
+  if (state.player.hp <= 0) {
+    startGameOver(reason);
+  }
+}
+
+function splitTextByLength(text, maxLength) {
+  const lines = [];
+  for (let index = 0; index < text.length; index += maxLength) {
+    lines.push(text.slice(index, index + maxLength));
+  }
+  return lines;
 }
 
 function updateCameraTarget() {
@@ -462,19 +662,14 @@ function generateFloor() {
   const stairRoom = rooms[rooms.length - 1];
   state.stairs = { x: stairRoom.cx, y: stairRoom.cy };
 
-  const monsterTypes = [
-    { key: "slime", name: "ぬるりスライム" },
-    { key: "bat", name: "バサバサコウモリ" },
-    { key: "golem", name: "ゴロ岩ゴーレム" },
-  ];
-
   state.enemies = rooms.slice(1, 6).map((room, i) => {
     const type = monsterTypes[i % monsterTypes.length];
+    const floorBonus = Math.max(0, state.floor - 1);
     return {
       x: room.cx,
       y: room.cy,
-      hp: 6 + state.floor,
-      atk: 2 + Math.floor(state.floor / 2),
+      hp: Math.round(type.baseHp + floorBonus * type.hpScale),
+      atk: Math.round(type.baseAtk + floorBonus * type.atkScale),
       name: type.name,
       sprite: type.key,
     };
@@ -513,21 +708,15 @@ function playerAttackPower() {
 }
 
 function randomItemType() {
-  const table = [
-    { type: "riceBall", weight: 36 },
-    { type: "herb", weight: 30 },
-    { type: "woodenSword", weight: 24 },
-    { type: "ironSword", weight: 10 },
-  ];
-  const total = table.reduce((sum, entry) => sum + entry.weight, 0);
+  const total = itemDropTable.reduce((sum, entry) => sum + entry.weight, 0);
   let roll = rng(1, total);
 
-  for (const entry of table) {
+  for (const entry of itemDropTable) {
     roll -= entry.weight;
     if (roll <= 0) return entry.type;
   }
 
-  return table[0].type;
+  return itemDropTable[0].type;
 }
 
 function isItemPlacementBlocked(x, y) {
@@ -571,6 +760,7 @@ function buildPlayerAttackResult(enemy) {
 function startPlayerAttack(enemy) {
   const direction = directionBetween(state.player, enemy);
   state.player.direction = direction;
+  playSound("attack");
   const result = buildPlayerAttackResult(enemy);
   const duration = result.killed ? 300 : 430;
   state.action = {
@@ -615,11 +805,14 @@ function applyPlayerAttackHit(action) {
   enemy.hitDirection = action.direction;
   addImpactEffect(enemy.x, enemy.y);
   addFloatingText(String(action.result.damage), enemy.x, enemy.y, "#fde68a");
+  playSound("hit");
   startCameraShake(90, action.result.killed ? 4 : 2);
   addLog(`${enemy.name}に${action.result.damage}ダメージ。`);
 
   if (enemy.hp <= 0) {
     state.player.exp += 3;
+    state.stats.defeated += 1;
+    playSound("defeat");
     addDefeatEffect(enemy.x, enemy.y);
     addFloatingText("撃破", enemy.x, enemy.y, "#fca5a5");
     addLog(`${enemy.name}をたおした！`);
@@ -638,12 +831,11 @@ function applyEnemyCounter(action) {
   enemy.counterDirection = directionBetween(enemy, state.player);
   state.player.hp -= action.result.counterDamage;
   addFloatingText(String(action.result.counterDamage), state.player.x, state.player.y, "#fb7185");
+  playSound("damage");
   startCameraShake();
   startFlash("rgba(239,68,68,0.22)", 120);
   addLog(`${enemy.name}の反撃！ 吾郎は${action.result.counterDamage}ダメージを受けた。`);
-  if (state.player.hp <= 0) {
-    addLog("吾郎は力尽きた… Rキーで再開。");
-  }
+  handlePlayerDefeat(defeatReasonFromEnemy(enemy));
 }
 
 function updateAction(delta) {
@@ -672,6 +864,7 @@ function updateAction(delta) {
 
 function moveEnemies(options = {}) {
   for (const e of state.enemies) {
+    if (state.gameOver.active) return;
     if (options.skipEnemy === e) continue;
     if (e.hp <= 0) continue;
     const dx = Math.sign(state.player.x - e.x);
@@ -683,9 +876,12 @@ function moveEnemies(options = {}) {
       const enemyDmg = Math.max(1, e.atk - state.player.def + rng(0, 1));
       state.player.hp -= enemyDmg;
       addFloatingText(String(enemyDmg), state.player.x, state.player.y, "#fb7185");
+      playSound("damage");
       startCameraShake();
       startFlash("rgba(239,68,68,0.22)", 120);
       addLog(`${e.name}の攻撃！ ${enemyDmg}ダメージ。`);
+      handlePlayerDefeat(defeatReasonFromEnemy(e));
+      if (state.gameOver.active) return;
       continue;
     }
 
@@ -698,11 +894,15 @@ function moveEnemies(options = {}) {
 
 function tickTurn(options = {}) {
   if (state.player.hp <= 0) return;
+  state.stats.turns += 1;
   state.player.hunger = Math.max(0, state.player.hunger - 1);
   if (state.player.hunger === 0) {
     state.player.hp = Math.max(0, state.player.hp - 1);
     addLog("満腹度が0！ 空腹ダメージ。");
+    playSound("damage");
+    handlePlayerDefeat(defeatReasons.hunger);
   }
+  if (state.gameOver.active) return;
   if (!options.skipEnemies) {
     moveEnemies(options);
   }
@@ -719,6 +919,7 @@ function pickUpItemAtPlayer() {
 
   state.items = state.items.filter((entry) => entry.id !== item.id);
   state.player.inventory.push({ id: item.id, type: item.type });
+  playSound("pickup");
   addLog(`${itemTypes[item.type].name}を拾った。`);
   return true;
 }
@@ -741,6 +942,7 @@ function useInventorySlot(slotIndex) {
   const itemType = itemTypes[item.type];
   if (itemType.kind === "weapon") {
     state.player.weapon = item.id;
+    playSound("use");
     addLog(`${itemType.name}を装備した。`);
     tickTurn();
     return;
@@ -750,6 +952,7 @@ function useInventorySlot(slotIndex) {
     const before = state.player.hunger;
     state.player.hunger = Math.min(100, state.player.hunger + itemType.hunger);
     removeInventoryItem(item);
+    playSound("use");
     addLog(`${itemType.name}を食べた。満腹度 ${before}→${state.player.hunger}。`);
     tickTurn();
     return;
@@ -759,6 +962,7 @@ function useInventorySlot(slotIndex) {
     const before = state.player.hp;
     state.player.hp = Math.min(state.player.maxHp, state.player.hp + itemType.heal);
     removeInventoryItem(item);
+    playSound("use");
     addLog(`${itemType.name}を使った。HP ${before}→${state.player.hp}。`);
     tickTurn();
   }
@@ -767,6 +971,12 @@ function useInventorySlot(slotIndex) {
 function resetPlayerRunState() {
   state.floor = 1;
   state.items = [];
+  state.action = null;
+  state.gameOver.active = false;
+  state.gameOver.age = 0;
+  state.gameOver.reason = "";
+  state.stats.turns = 0;
+  state.stats.defeated = 0;
   state.player.hp = state.player.maxHp;
   state.player.hunger = 100;
   state.player.exp = 0;
@@ -774,6 +984,7 @@ function resetPlayerRunState() {
   state.player.inventory = [];
   state.player.weapon = null;
   nextItemId = 1;
+  inventoryRenderKey = "";
 }
 
 function tryMove(dx, dy) {
@@ -792,10 +1003,12 @@ function tryMove(dx, dy) {
   startPlayerWalk(state.player.x, state.player.y, nx, ny);
   state.player.x = nx;
   state.player.y = ny;
+  playSound("move");
   pickUpItemAtPlayer();
 
   if (nx === state.stairs.x && ny === state.stairs.y) {
     state.floor += 1;
+    playSound("stairs");
     addLog(`${state.floor}Fへ進んだ。`);
     generateFloor();
     return;
@@ -883,8 +1096,14 @@ function updateAnimations(delta) {
   updateEnemyReactions(delta);
   updateCameraTarget();
   updateEffects(delta);
+  updateGameOver(delta);
   updateCamera(delta);
   updateOverlay(delta);
+}
+
+function updateGameOver(delta) {
+  if (!state.gameOver.active) return;
+  state.gameOver.age = Math.min(state.gameOver.duration, state.gameOver.age + delta);
 }
 
 function updateEnemyReactions(delta) {
@@ -1052,7 +1271,20 @@ function drawEnemyActor(enemy) {
 function drawPlayerActor() {
   const sprite = getPlayerSprite();
   const position = actorDrawPosition(state.player, PLAYER_DRAW);
-  const didDraw = drawSprite(sprite, position.x, position.y, PLAYER_DRAW.w, PLAYER_DRAW.h);
+  let didDraw = false;
+
+  if (state.gameOver.active) {
+    const progress = clamp(state.gameOver.age / 520, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = 1 - progress * 0.22;
+    ctx.translate(position.x + PLAYER_DRAW.w / 2, position.y + PLAYER_DRAW.h - 10 + progress * 8);
+    ctx.rotate(-0.65 * progress);
+    didDraw = drawSprite(sprite, -PLAYER_DRAW.w / 2, -PLAYER_DRAW.h + 10, PLAYER_DRAW.w, PLAYER_DRAW.h);
+    ctx.restore();
+  } else {
+    didDraw = drawSprite(sprite, position.x, position.y, PLAYER_DRAW.w, PLAYER_DRAW.h);
+  }
+
   if (!didDraw) {
     drawPlayerShape(position.x, position.y);
   }
@@ -1195,13 +1427,76 @@ function drawEffectsLayer() {
 }
 
 function drawOverlayLayer() {
-  if (overlay.flashTime <= 0) return;
+  if (overlay.flashTime > 0) {
+    const progress = overlay.flashTime / Math.max(1, overlay.flashDuration);
+    ctx.save();
+    ctx.globalAlpha = progress;
+    ctx.fillStyle = overlay.flashColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
 
-  const progress = overlay.flashTime / Math.max(1, overlay.flashDuration);
+  if (state.gameOver.active) {
+    drawGameOverLayer();
+  }
+}
+
+function drawGameOverLayer() {
+  const progress = clamp(state.gameOver.age / state.gameOver.duration, 0, 1);
+  const fade = clamp(progress * 1.4, 0, 0.78);
+  const panelAlpha = clamp((progress - 0.25) / 0.55, 0, 1);
+  const panelWidth = 420;
+  const panelHeight = 292;
+  const panelX = Math.round((canvas.width - panelWidth) / 2);
+  const panelY = Math.round((canvas.height - panelHeight) / 2);
+  const reasonLines = splitTextByLength(state.gameOver.reason || defeatReasons.fallbackEnemy, 15);
+
   ctx.save();
-  ctx.globalAlpha = progress;
-  ctx.fillStyle = overlay.flashColor;
+  ctx.fillStyle = `rgba(6, 8, 13, ${fade})`;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (panelAlpha > 0) {
+    ctx.globalAlpha = panelAlpha;
+    ctx.fillStyle = "#111827";
+    ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+    ctx.strokeStyle = "#d6b15f";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(panelX + 2, panelY + 2, panelWidth - 4, panelHeight - 4);
+    ctx.strokeStyle = "#5f4624";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(panelX + 9, panelY + 9, panelWidth - 18, panelHeight - 18);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#facc15";
+    ctx.font = "bold 18px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("ゲームオーバー", canvas.width / 2, panelY + 34);
+
+    ctx.fillStyle = "#fca5a5";
+    ctx.font = reasonLines.length > 1 ? "bold 23px 'Yu Gothic UI', sans-serif" : "bold 28px 'Yu Gothic UI', sans-serif";
+    for (let i = 0; i < reasonLines.length; i++) {
+      ctx.fillText(reasonLines[i], canvas.width / 2, panelY + 68 + i * 28);
+    }
+
+    ctx.fillStyle = "#e6ecff";
+    ctx.font = "bold 15px 'Yu Gothic UI', sans-serif";
+    const lines = [
+      `到達階層: ${state.floor}F`,
+      `撃破数: ${state.stats.defeated}`,
+      `経験値: ${state.player.exp}`,
+      `経過ターン: ${state.stats.turns}`,
+      `装備: ${currentWeaponName()}`,
+    ];
+
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], canvas.width / 2, panelY + 130 + i * 24);
+    }
+
+    ctx.fillStyle = "#facc15";
+    ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("Rキーで再挑戦", canvas.width / 2, panelY + panelHeight - 28);
+  }
+
   ctx.restore();
 }
 
@@ -1286,7 +1581,7 @@ window.addEventListener("keydown", (event) => {
   if (key === "arrowleft" || key === "a") tryMove(-1, 0);
   if (key === "arrowright" || key === "d") tryMove(1, 0);
   if (key === " " && canAcceptInput()) tickTurn();
-  if (key === "r" && state.player.hp <= 0) {
+  if (key === "r" && state.gameOver.active) {
     resetPlayerRunState();
     clearPlayerMotion();
     clearTransientVisuals();
@@ -1294,6 +1589,17 @@ window.addEventListener("keydown", (event) => {
     generateFloor();
   }
 });
+
+if (ui.soundToggle) {
+  ui.soundToggle.addEventListener("click", () => {
+    const nextMuted = !sound.muted;
+    setSoundMuted(nextMuted);
+    if (!nextMuted) {
+      playSound("use");
+    }
+  });
+  setSoundMuted(true);
+}
 
 generateFloor();
 addLog("ダンジョンに入った。階段を目指そう。青いマスが階段だ。");
