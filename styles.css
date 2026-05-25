@@ -70,6 +70,32 @@ dd {
   font-weight: 700;
 }
 
+.inventory {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 5.5rem;
+  margin: 0 0 0.9rem;
+  padding: 0.65rem 0.8rem 0.65rem 2rem;
+  background: #090d14;
+  border: 2px solid #6b4e27;
+}
+
+.inventory li {
+  color: #dbeafe;
+  line-height: 1.35;
+}
+
+.inventory li.empty {
+  list-style: none;
+  margin-left: -1.2rem;
+  color: #8ea3c5;
+}
+
+.inventory .equipped {
+  color: #facc15;
+  font-weight: 700;
+}
+
 .log {
   margin: 0;
   padding: 0.65rem 0.8rem 0.65rem 1.5rem;

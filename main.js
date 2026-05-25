@@ -110,6 +110,40 @@ const runtime = {
   elapsed: 0,
 };
 
+const itemTypes = {
+  woodenSword: {
+    name: "木の棒",
+    kind: "weapon",
+    icon: "weapon",
+    atk: 1,
+    description: "攻撃+1",
+  },
+  ironSword: {
+    name: "鉄の剣",
+    kind: "weapon",
+    icon: "weapon",
+    atk: 3,
+    description: "攻撃+3",
+  },
+  riceBall: {
+    name: "おにぎり",
+    kind: "food",
+    icon: "food",
+    hunger: 35,
+    description: "満腹度+35",
+  },
+  herb: {
+    name: "薬草",
+    kind: "potion",
+    icon: "potion",
+    heal: 10,
+    description: "HP+10",
+  },
+};
+
+let nextItemId = 1;
+let inventoryRenderKey = "";
+
 const effects = [];
 
 const camera = {
@@ -133,6 +167,8 @@ const ui = {
   def: document.getElementById("def"),
   hunger: document.getElementById("hunger"),
   exp: document.getElementById("exp"),
+  weapon: document.getElementById("weapon"),
+  inventory: document.getElementById("inventory"),
   log: document.getElementById("log"),
 };
 
@@ -140,6 +176,7 @@ const state = {
   floor: 1,
   map: [],
   enemies: [],
+  items: [],
   stairs: { x: 0, y: 0 },
   action: null,
   player: {
@@ -152,6 +189,9 @@ const state = {
     def: 2,
     hunger: 100,
     exp: 0,
+    inventoryLimit: 9,
+    inventory: [],
+    weapon: null,
     motion: null,
   },
 };
@@ -439,6 +479,8 @@ function generateFloor() {
       sprite: type.key,
     };
   });
+
+  placeItems(rooms);
 }
 
 function isWalkable(x, y) {
@@ -450,8 +492,77 @@ function enemyAt(x, y) {
   return state.enemies.find((e) => e.x === x && e.y === y && e.hp > 0);
 }
 
+function itemAt(x, y) {
+  return state.items.find((item) => item.x === x && item.y === y);
+}
+
+function equippedWeapon() {
+  if (!state.player.weapon) return null;
+  const item = state.player.inventory.find((entry) => entry.id === state.player.weapon);
+  if (!item || itemTypes[item.type].kind !== "weapon") return null;
+  return item;
+}
+
+function weaponAttackBonus() {
+  const weapon = equippedWeapon();
+  return weapon ? itemTypes[weapon.type].atk : 0;
+}
+
+function playerAttackPower() {
+  return state.player.atk + weaponAttackBonus();
+}
+
+function randomItemType() {
+  const table = [
+    { type: "riceBall", weight: 36 },
+    { type: "herb", weight: 30 },
+    { type: "woodenSword", weight: 24 },
+    { type: "ironSword", weight: 10 },
+  ];
+  const total = table.reduce((sum, entry) => sum + entry.weight, 0);
+  let roll = rng(1, total);
+
+  for (const entry of table) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.type;
+  }
+
+  return table[0].type;
+}
+
+function isItemPlacementBlocked(x, y) {
+  if (!isWalkable(x, y)) return true;
+  if (state.player.x === x && state.player.y === y) return true;
+  if (state.stairs.x === x && state.stairs.y === y) return true;
+  if (enemyAt(x, y)) return true;
+  return Boolean(itemAt(x, y));
+}
+
+function placeItems(rooms) {
+  state.items = [];
+  const candidates = rooms.slice(1);
+  const count = rng(3, 6);
+  let attempts = 0;
+
+  while (state.items.length < count && attempts < 120) {
+    attempts += 1;
+    const room = candidates[rng(0, candidates.length - 1)];
+    const x = rng(room.x, room.x + room.w - 1);
+    const y = rng(room.y, room.y + room.h - 1);
+
+    if (isItemPlacementBlocked(x, y)) continue;
+    state.items.push({
+      id: nextItemId,
+      type: randomItemType(),
+      x,
+      y,
+    });
+    nextItemId += 1;
+  }
+}
+
 function buildPlayerAttackResult(enemy) {
-  const damage = Math.max(1, state.player.atk + rng(0, 2));
+  const damage = Math.max(1, playerAttackPower() + rng(0, 2));
   const killed = enemy.hp - damage <= 0;
   const counterDamage = killed ? 0 : Math.max(1, enemy.atk - state.player.def + rng(0, 1));
   return { damage, killed, counterDamage };
@@ -597,6 +708,74 @@ function tickTurn(options = {}) {
   }
 }
 
+function pickUpItemAtPlayer() {
+  const item = itemAt(state.player.x, state.player.y);
+  if (!item) return false;
+
+  if (state.player.inventory.length >= state.player.inventoryLimit) {
+    addLog("持ち物がいっぱいで拾えない。");
+    return false;
+  }
+
+  state.items = state.items.filter((entry) => entry.id !== item.id);
+  state.player.inventory.push({ id: item.id, type: item.type });
+  addLog(`${itemTypes[item.type].name}を拾った。`);
+  return true;
+}
+
+function removeInventoryItem(item) {
+  state.player.inventory = state.player.inventory.filter((entry) => entry.id !== item.id);
+  if (state.player.weapon === item.id) {
+    state.player.weapon = null;
+  }
+}
+
+function useInventorySlot(slotIndex) {
+  if (!canAcceptInput() || state.player.hp <= 0) return;
+  const item = state.player.inventory[slotIndex];
+  if (!item) {
+    addLog("その番号の持ち物はない。");
+    return;
+  }
+
+  const itemType = itemTypes[item.type];
+  if (itemType.kind === "weapon") {
+    state.player.weapon = item.id;
+    addLog(`${itemType.name}を装備した。`);
+    tickTurn();
+    return;
+  }
+
+  if (itemType.kind === "food") {
+    const before = state.player.hunger;
+    state.player.hunger = Math.min(100, state.player.hunger + itemType.hunger);
+    removeInventoryItem(item);
+    addLog(`${itemType.name}を食べた。満腹度 ${before}→${state.player.hunger}。`);
+    tickTurn();
+    return;
+  }
+
+  if (itemType.kind === "potion") {
+    const before = state.player.hp;
+    state.player.hp = Math.min(state.player.maxHp, state.player.hp + itemType.heal);
+    removeInventoryItem(item);
+    addLog(`${itemType.name}を使った。HP ${before}→${state.player.hp}。`);
+    tickTurn();
+  }
+}
+
+function resetPlayerRunState() {
+  state.floor = 1;
+  state.items = [];
+  state.player.hp = state.player.maxHp;
+  state.player.hunger = 100;
+  state.player.exp = 0;
+  state.player.direction = "down";
+  state.player.inventory = [];
+  state.player.weapon = null;
+  nextItemId = 1;
+}
+
 function tryMove(dx, dy) {
   if (!canAcceptInput() || state.player.hp <= 0) return;
   setPlayerDirection(dx, dy);
@@ -613,6 +792,7 @@ function tryMove(dx, dy) {
   startPlayerWalk(state.player.x, state.player.y, nx, ny);
   state.player.x = nx;
   state.player.y = ny;
+  pickUpItemAtPlayer();
 
   if (nx === state.stairs.x && ny === state.stairs.y) {
     state.floor += 1;
@@ -795,6 +975,28 @@ function drawStairsLayer() {
 }
 
 function drawItemLayer() {
+  for (const item of state.items) {
+    const itemType = itemTypes[item.type];
+    const sx = gridToScreenX(item.x);
+    const sy = gridToScreenY(item.y);
+    const iconX = sx + 6;
+    const iconY = sy + 6;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(250, 204, 21, 0.18)";
+    ctx.beginPath();
+    ctx.ellipse(sx + TILE / 2, sy + TILE - 8, 11, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const didDraw = drawSprite(sprites.icons[itemType.icon], iconX, iconY, 20, 20);
+    if (!didDraw) {
+      ctx.fillStyle = itemType.kind === "weapon" ? "#d6b15f" : itemType.kind === "food" ? "#f97316" : "#22c55e";
+      ctx.beginPath();
+      ctx.arc(sx + TILE / 2, sy + TILE / 2, 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 }
 
 function actorFootY(actor) {
@@ -1019,12 +1221,49 @@ function draw() {
 }
 
 function updateUi() {
+  const weapon = equippedWeapon();
+  const bonus = weaponAttackBonus();
   ui.floor.textContent = `${state.floor}F`;
   ui.hp.textContent = `${Math.max(0, state.player.hp)} / ${state.player.maxHp}`;
-  ui.atk.textContent = state.player.atk;
+  ui.atk.textContent = bonus > 0 ? `${state.player.atk} + ${bonus}` : state.player.atk;
   ui.def.textContent = state.player.def;
   ui.hunger.textContent = state.player.hunger;
   ui.exp.textContent = state.player.exp;
+  ui.weapon.textContent = weapon ? itemTypes[weapon.type].name : "なし";
+  renderInventory();
+}
+
+function renderInventory() {
+  const renderKey = `${state.player.weapon || "none"}:${state.player.inventory
+    .map((item) => `${item.id}-${item.type}`)
+    .join(",")}`;
+  if (renderKey === inventoryRenderKey) return;
+  inventoryRenderKey = renderKey;
+  ui.inventory.innerHTML = "";
+
+  if (state.player.inventory.length === 0) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "なし";
+    ui.inventory.appendChild(li);
+    return;
+  }
+
+  for (let index = 0; index < state.player.inventory.length; index++) {
+    const item = state.player.inventory[index];
+    const itemType = itemTypes[item.type];
+    const li = document.createElement("li");
+    li.textContent = `${itemType.name} / ${itemType.description}`;
+
+    if (state.player.weapon === item.id) {
+      const equipped = document.createElement("span");
+      equipped.className = "equipped";
+      equipped.textContent = " 装備中";
+      li.appendChild(equipped);
+    }
+
+    ui.inventory.appendChild(li);
+  }
 }
 
 function loop(timestamp = 0) {
@@ -1038,17 +1277,17 @@ function loop(timestamp = 0) {
 
 window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
+  if (/^[1-9]$/.test(key)) {
+    useInventorySlot(Number(key) - 1);
+    return;
+  }
   if (key === "arrowup" || key === "w") tryMove(0, -1);
   if (key === "arrowdown" || key === "s") tryMove(0, 1);
   if (key === "arrowleft" || key === "a") tryMove(-1, 0);
   if (key === "arrowright" || key === "d") tryMove(1, 0);
   if (key === " " && canAcceptInput()) tickTurn();
   if (key === "r" && state.player.hp <= 0) {
-    state.floor = 1;
-    state.player.hp = state.player.maxHp;
-    state.player.hunger = 100;
-    state.player.exp = 0;
-    state.player.direction = "down";
+    resetPlayerRunState();
     clearPlayerMotion();
     clearTransientVisuals();
     addLog("再挑戦！");
