@@ -40,3 +40,19 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 
 - タイル画像: `assets/tiles/floor_01.svg`, `assets/tiles/floor_02.svg`, `assets/tiles/floor_03.svg`, `assets/tiles/wall_01.svg`, `assets/tiles/wall_02.svg`, `assets/tiles/wall_03.svg`, `assets/tiles/stairs_down.svg`
 - 仮アイコン画像: `assets/icons/item_weapon.svg`, `assets/icons/item_food.svg`, `assets/icons/item_potion.svg`
+
+## 配信時のアセットパス
+
+`main.js` は `window.GORO_DUNGEON_CONFIG.assetBaseUrl` を基準に画像パスを解決します。
+
+未指定の場合は `document.baseURI` を基準にします。GitHub Pagesなどのproject siteでは、`index.html` 側で現在のHTML位置を基準に注入しているため、`/assets/...` ではなく `./assets/...` 相当で解決されます。
+
+別の配信先でアセットだけCDNなどへ置く場合は、`main.js` より前に以下のように指定できます。
+
+```html
+<script>
+  window.GORO_DUNGEON_CONFIG = {
+    assetBaseUrl: "https://example.com/game_goro_dangeon/",
+  };
+</script>
+```

@@ -37,6 +37,11 @@
       </aside>
     </main>
 
+    <script>
+      window.GORO_DUNGEON_CONFIG = {
+        assetBaseUrl: new URL(".", document.currentScript.ownerDocument.baseURI).toString(),
+      };
+    </script>
     <script src="main.js"></script>
   </body>
 </html>
