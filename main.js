@@ -157,9 +157,18 @@ const itemTypes = {
 };
 
 const monsterTypes = [
-  { key: "slime", name: "ぬるりスライム", baseHp: 5, baseAtk: 2, hpScale: 1, atkScale: 0.35 },
-  { key: "bat", name: "バサバサコウモリ", baseHp: 4, baseAtk: 3, hpScale: 0.8, atkScale: 0.45 },
-  { key: "golem", name: "ゴロ岩ゴーレム", baseHp: 9, baseAtk: 4, hpScale: 1.4, atkScale: 0.6 },
+  { key: "slime", name: "ぬるりスライム", baseHp: 5, baseAtk: 2, hpScale: 1, atkScale: 0.35, exp: 4 },
+  { key: "bat", name: "バサバサコウモリ", baseHp: 4, baseAtk: 3, hpScale: 0.8, atkScale: 0.45, exp: 5 },
+  { key: "golem", name: "ゴロ岩ゴーレム", baseHp: 9, baseAtk: 4, hpScale: 1.4, atkScale: 0.6, exp: 9 },
+];
+
+const levelTable = [
+  { level: 1, nextExp: 8, maxHp: 20, atk: 5, def: 2 },
+  { level: 2, nextExp: 20, maxHp: 24, atk: 6, def: 2 },
+  { level: 3, nextExp: 38, maxHp: 29, atk: 7, def: 3 },
+  { level: 4, nextExp: 62, maxHp: 34, atk: 8, def: 3 },
+  { level: 5, nextExp: 92, maxHp: 40, atk: 9, def: 4 },
+  { level: 6, nextExp: 128, maxHp: 46, atk: 10, def: 4 },
 ];
 
 const itemDropTable = [
@@ -244,12 +253,14 @@ const state = {
     x: 2,
     y: 2,
     direction: "down",
+    level: 1,
     hp: 20,
     maxHp: 20,
     atk: 5,
     def: 2,
     hunger: 100,
     exp: 0,
+    recoveryCounter: 0,
     inventoryLimit: 9,
     inventory: [],
     weapon: null,
@@ -263,6 +274,19 @@ function rng(min, max) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function levelEntry(level) {
+  return levelTable.find((entry) => entry.level === level) || levelTable[0];
+}
+
+function maxLevelEntry() {
+  return levelTable[levelTable.length - 1];
+}
+
+function nextLevelExp(level) {
+  const entry = levelEntry(level);
+  return entry.level >= maxLevelEntry().level ? null : entry.nextExp;
 }
 
 function gridToWorldX(x) {
@@ -798,6 +822,7 @@ function generateFloor() {
       y: room.cy,
       hp: Math.round(type.baseHp + floorBonus * type.hpScale),
       atk: Math.round(type.baseAtk + floorBonus * type.atkScale),
+      exp: type.exp,
       name: type.name,
       sprite: type.key,
     };
@@ -1105,9 +1130,15 @@ function resetPlayerRunState() {
   state.gameOver.reason = "";
   state.stats.turns = 0;
   state.stats.defeated = 0;
+  const initialLevel = levelEntry(1);
+  state.player.level = initialLevel.level;
+  state.player.maxHp = initialLevel.maxHp;
   state.player.hp = state.player.maxHp;
+  state.player.atk = initialLevel.atk;
+  state.player.def = initialLevel.def;
   state.player.hunger = 100;
   state.player.exp = 0;
+  state.player.recoveryCounter = 0;
   state.player.direction = "down";
   state.player.inventory = [];
   state.player.weapon = null;
