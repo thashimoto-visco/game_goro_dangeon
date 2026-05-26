@@ -14,9 +14,24 @@ const STAIRS_DRAW = { offsetX: 8, offsetY: 8, w: 16, h: 16 };
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
+const appConfig = {
+  assetBaseUrl: "",
+  ...(window.GORO_DUNGEON_CONFIG || {}),
+};
+
+function resolveAssetUrl(path) {
+  if (/^(?:https?:|data:|blob:|file:)/.test(path)) return path;
+  const baseUrl = appConfig.assetBaseUrl || document.baseURI;
+  return new URL(path, baseUrl).toString();
+}
+
 function createImage(src) {
   const image = new Image();
-  image.src = src;
+  const resolvedSrc = resolveAssetUrl(src);
+  image.addEventListener("error", () => {
+    console.warn(`画像を読み込めません: ${resolvedSrc}`);
+  });
+  image.src = resolvedSrc;
   return image;
 }
 
