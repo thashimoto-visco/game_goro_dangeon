@@ -289,6 +289,40 @@ function nextLevelExp(level) {
   return entry.level >= maxLevelEntry().level ? null : entry.nextExp;
 }
 
+function canLevelUp() {
+  const requiredExp = nextLevelExp(state.player.level);
+  return requiredExp !== null && state.player.exp >= requiredExp;
+}
+
+function applyLevelUp(nextEntry) {
+  const previous = {
+    maxHp: state.player.maxHp,
+    atk: state.player.atk,
+    def: state.player.def,
+  };
+
+  state.player.level = nextEntry.level;
+  state.player.maxHp = nextEntry.maxHp;
+  state.player.hp = nextEntry.maxHp;
+  state.player.atk = nextEntry.atk;
+  state.player.def = nextEntry.def;
+
+  addFloatingText("Lv UP", state.player.x, state.player.y, "#fde68a");
+  addLog(`吾郎はレベル${state.player.level}になった！`);
+  addLog(`最大HP ${previous.maxHp}→${state.player.maxHp} / 攻撃 ${previous.atk}→${state.player.atk} / 守備 ${previous.def}→${state.player.def}`);
+}
+
+function gainExp(amount) {
+  if (!Number.isFinite(amount) || amount <= 0) return;
+
+  state.player.exp += amount;
+  addLog(`経験値を${amount}得た。`);
+
+  while (canLevelUp()) {
+    applyLevelUp(levelEntry(state.player.level + 1));
+  }
+}
+
 function gridToWorldX(x) {
   return x * TILE;
 }
@@ -963,12 +997,12 @@ function applyPlayerAttackHit(action) {
   addLog(`${enemy.name}に${action.result.damage}ダメージ。`);
 
   if (enemy.hp <= 0) {
-    state.player.exp += 3;
     state.stats.defeated += 1;
     playSound("defeat");
     addDefeatEffect(enemy.x, enemy.y);
     addFloatingText("撃破", enemy.x, enemy.y, "#fca5a5");
     addLog(`${enemy.name}をたおした！`);
+    gainExp(enemy.exp);
   }
 }
 

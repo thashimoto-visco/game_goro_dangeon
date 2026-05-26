@@ -279,6 +279,7 @@ Topic 1では新規アイテムを増やさず、既存アイテムの出現率�
 ## 実装ステップ詳細
 
 - Step 1: [成長データ追加](step1-growth-data-plan.md)
+- Step 2: [経験値とレベルアップ実装](step2-exp-levelup-plan.md)
 
 ## 受け入れ条件
 
