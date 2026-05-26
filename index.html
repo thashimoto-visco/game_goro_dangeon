@@ -9,8 +9,11 @@
   <body>
     <main class="layout">
       <section class="game-panel">
-        <h1>吾郎の不思議なダンジョン</h1>
-        <p class="subtitle">矢印キー or WASD で移動 / <kbd>Space</kbd> で足踏み</p>
+        <div class="game-header">
+          <h1>吾郎の不思議なダンジョン</h1>
+          <button id="sound-toggle" class="sound-toggle" type="button" aria-pressed="false">音 OFF</button>
+        </div>
+        <p class="subtitle">矢印キー or WASD で移動 / <kbd>Space</kbd> で足踏み / <kbd>I</kbd> で持ち物</p>
         <canvas id="game" width="640" height="480" aria-label="ゲーム画面"></canvas>
       </section>
 
@@ -23,7 +26,11 @@
           <div><dt>守備</dt><dd id="def">2</dd></div>
           <div><dt>満腹度</dt><dd id="hunger">100</dd></div>
           <div><dt>経験値</dt><dd id="exp">0</dd></div>
+          <div><dt>装備</dt><dd id="weapon">なし</dd></div>
         </dl>
+
+        <h2>持ち物</h2>
+        <ol id="inventory" class="inventory"></ol>
 
         <h2>ログ</h2>
         <ul id="log" class="log"></ul>
