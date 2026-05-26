@@ -187,6 +187,10 @@
 
 ## 推奨マイルストーン
 
+中期のトピック別ロードマップは `docs/planning/mid-term-topic-roadmap.md` を参照する。
+
+優先度未確定または後回しの候補は `docs/planning/mid-term-backlog.md` に記録する。
+
 ### M1: 画面の土台完成
 
 対象: Phase 1
