@@ -221,6 +221,10 @@ const state = {
     turns: 0,
     defeated: 0,
   },
+  menu: {
+    type: null,
+    selectedIndex: 0,
+  },
   player: {
     x: 2,
     y: 2,
@@ -375,6 +379,22 @@ function playSound(name) {
     playTone(220, 0.14, "sawtooth", 0.1);
     playTone(165, 0.16, "sawtooth", 0.1, 0.14);
     playTone(110, 0.28, "sawtooth", 0.1, 0.3);
+    return;
+  }
+  if (name === "menu") {
+    playTone(330, 0.04, "square", 0.06);
+    return;
+  }
+  if (name === "cursor") {
+    playTone(260, 0.025, "square", 0.04);
+    return;
+  }
+  if (name === "drop") {
+    playTone(180, 0.08, "triangle", 0.06);
+    return;
+  }
+  if (name === "fail") {
+    playTone(90, 0.08, "sawtooth", 0.06);
   }
 }
 
@@ -423,7 +443,11 @@ function setPlayerDirection(dx, dy) {
 }
 
 function canAcceptInput() {
-  return !state.action && !state.gameOver.active;
+  return !state.action && !state.gameOver.active && !isMenuOpen();
+}
+
+function isMenuOpen() {
+  return Boolean(state.menu.type);
 }
 
 function startPlayerWalk(fromX, fromY, toX, toY) {
@@ -559,6 +583,7 @@ function startFlash(color = "rgba(255,255,255,0.25)", duration = 120) {
 function clearTransientVisuals() {
   effects.length = 0;
   state.action = null;
+  closeMenu();
   state.gameOver.active = false;
   state.gameOver.age = 0;
   state.gameOver.reason = "";
@@ -576,6 +601,93 @@ function currentWeaponName() {
   return weapon ? itemTypes[weapon.type].name : "なし";
 }
 
+function currentInventoryItem() {
+  return state.player.inventory[state.menu.selectedIndex] || null;
+}
+
+function openInventoryMenu() {
+  if (!canAcceptInput() || state.player.hp <= 0) return;
+  state.menu.type = "inventory";
+  state.menu.selectedIndex = clamp(state.menu.selectedIndex, 0, Math.max(0, state.player.inventory.length - 1));
+  playSound("menu");
+}
+
+function closeMenu() {
+  state.menu.type = null;
+  state.menu.selectedIndex = 0;
+}
+
+function moveMenuCursor(delta) {
+  if (state.menu.type !== "inventory") return;
+  const count = state.player.inventory.length;
+  if (count === 0) return;
+  state.menu.selectedIndex = (state.menu.selectedIndex + delta + count) % count;
+  playSound("cursor");
+}
+
+function confirmInventoryMenu() {
+  if (state.menu.type !== "inventory") return;
+  const item = currentInventoryItem();
+  if (!item) {
+    playSound("fail");
+    return;
+  }
+  const index = state.menu.selectedIndex;
+  closeMenu();
+  useInventorySlot(index);
+}
+
+function dropInventoryItem(index) {
+  if (state.menu.type !== "inventory") return;
+  const item = state.player.inventory[index];
+  if (!item) {
+    playSound("fail");
+    return;
+  }
+
+  if (itemAt(state.player.x, state.player.y)) {
+    playSound("fail");
+    addLog("足元に物があって置けない。");
+    return;
+  }
+
+  const itemType = itemTypes[item.type];
+  removeInventoryItem(item);
+  state.items.push({
+    id: item.id,
+    type: item.type,
+    x: state.player.x,
+    y: state.player.y,
+  });
+  state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
+  playSound("drop");
+  addLog(`${itemType.name}を置いた。`);
+  closeMenu();
+}
+
+function handleMenuInput(key) {
+  if (key === "escape" || key === "i") {
+    closeMenu();
+    playSound("menu");
+    return;
+  }
+  if (key === "arrowup" || key === "w") {
+    moveMenuCursor(-1);
+    return;
+  }
+  if (key === "arrowdown" || key === "s") {
+    moveMenuCursor(1);
+    return;
+  }
+  if (key === "enter") {
+    confirmInventoryMenu();
+    return;
+  }
+  if (key === "d") {
+    dropInventoryItem(state.menu.selectedIndex);
+  }
+}
+
 function defeatReasonFromEnemy(enemy) {
   if (!enemy) return defeatReasons.fallbackEnemy;
   return defeatReasons.enemy[enemy.sprite] || `${enemy.name}に倒された`;
@@ -586,6 +698,7 @@ function startGameOver(reason) {
 
   state.player.hp = 0;
   state.action = null;
+  closeMenu();
   clearPlayerMotion();
   state.gameOver.active = true;
   state.gameOver.age = 0;
@@ -1426,6 +1539,81 @@ function drawEffectsLayer() {
   ctx.restore();
 }
 
+function drawMenuLayer() {
+  if (state.menu.type === "inventory" && !state.gameOver.active) {
+    drawInventoryMenu();
+  }
+}
+
+function drawInventoryMenu() {
+  const panelWidth = 430;
+  const panelHeight = 320;
+  const panelX = Math.round((canvas.width - panelWidth) / 2);
+  const panelY = Math.round((canvas.height - panelHeight) / 2);
+  const items = state.player.inventory;
+  const selected = currentInventoryItem();
+
+  ctx.save();
+  ctx.fillStyle = "rgba(6, 8, 13, 0.62)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#111827";
+  ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+  ctx.strokeStyle = "#d6b15f";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(panelX + 2, panelY + 2, panelWidth - 4, panelHeight - 4);
+  ctx.strokeStyle = "#5f4624";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(panelX + 9, panelY + 9, panelWidth - 18, panelHeight - 18);
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#facc15";
+  ctx.font = "bold 22px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("持ち物", panelX + 24, panelY + 34);
+
+  ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
+  if (items.length === 0) {
+    ctx.fillStyle = "#8ea3c5";
+    ctx.fillText("持ち物はない", panelX + 32, panelY + 92);
+  } else {
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      const itemType = itemTypes[item.type];
+      const rowY = panelY + 76 + index * 24;
+      const isSelected = index === state.menu.selectedIndex;
+
+      if (isSelected) {
+        ctx.fillStyle = "rgba(214, 177, 95, 0.22)";
+        ctx.fillRect(panelX + 22, rowY - 12, panelWidth - 44, 22);
+      }
+
+      ctx.fillStyle = isSelected ? "#f8fafc" : "#dbeafe";
+      ctx.fillText(`${index + 1}. ${itemType.name}`, panelX + 34, rowY);
+
+      if (state.player.weapon === item.id) {
+        ctx.fillStyle = "#facc15";
+        ctx.fillText("装備中", panelX + 190, rowY);
+      }
+    }
+  }
+
+  ctx.fillStyle = "#0b1018";
+  ctx.fillRect(panelX + 22, panelY + 235, panelWidth - 44, 48);
+  ctx.strokeStyle = "#6b4e27";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(panelX + 22, panelY + 235, panelWidth - 44, 48);
+  ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "#e6ecff";
+  const detailText = selected ? `${itemTypes[selected.type].description}` : "アイテムを持っていない。";
+  ctx.fillText(detailText, panelX + 36, panelY + 260);
+
+  ctx.fillStyle = "#c8d3f0";
+  ctx.font = "bold 12px 'Yu Gothic UI', sans-serif";
+  const hint = items.length > 0 ? "Enter: 使う/装備  D: 置く  Esc: 閉じる" : "Esc: 閉じる";
+  ctx.fillText(hint, panelX + 24, panelY + panelHeight - 22);
+  ctx.restore();
+}
+
 function drawOverlayLayer() {
   if (overlay.flashTime > 0) {
     const progress = overlay.flashTime / Math.max(1, overlay.flashDuration);
@@ -1512,6 +1700,7 @@ function draw() {
   drawEffectsLayer();
   ctx.restore();
 
+  drawMenuLayer();
   drawOverlayLayer();
 }
 
@@ -1572,6 +1761,35 @@ function loop(timestamp = 0) {
 
 window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
+  if (
+    key === " " ||
+    key === "arrowup" ||
+    key === "arrowdown" ||
+    key === "arrowleft" ||
+    key === "arrowright"
+  ) {
+    event.preventDefault();
+  }
+
+  if (key === "r" && state.gameOver.active) {
+    resetPlayerRunState();
+    clearPlayerMotion();
+    clearTransientVisuals();
+    addLog("再挑戦！");
+    generateFloor();
+    return;
+  }
+
+  if (isMenuOpen()) {
+    handleMenuInput(key);
+    return;
+  }
+
+  if (key === "i") {
+    openInventoryMenu();
+    return;
+  }
+
   if (/^[1-9]$/.test(key)) {
     useInventorySlot(Number(key) - 1);
     return;
@@ -1581,13 +1799,6 @@ window.addEventListener("keydown", (event) => {
   if (key === "arrowleft" || key === "a") tryMove(-1, 0);
   if (key === "arrowright" || key === "d") tryMove(1, 0);
   if (key === " " && canAcceptInput()) tickTurn();
-  if (key === "r" && state.gameOver.active) {
-    resetPlayerRunState();
-    clearPlayerMotion();
-    clearTransientVisuals();
-    addLog("再挑戦！");
-    generateFloor();
-  }
 });
 
 if (ui.soundToggle) {
