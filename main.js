@@ -157,16 +157,91 @@ const itemTypes = {
 };
 
 const monsterTypes = [
-  { key: "slime", name: "ぬるりスライム", baseHp: 5, baseAtk: 2, hpScale: 1, atkScale: 0.35 },
-  { key: "bat", name: "バサバサコウモリ", baseHp: 4, baseAtk: 3, hpScale: 0.8, atkScale: 0.45 },
-  { key: "golem", name: "ゴロ岩ゴーレム", baseHp: 9, baseAtk: 4, hpScale: 1.4, atkScale: 0.6 },
+  { key: "slime", name: "ぬるりスライム", baseHp: 5, baseAtk: 2, hpScale: 1, atkScale: 0.35, exp: 4 },
+  { key: "bat", name: "バサバサコウモリ", baseHp: 4, baseAtk: 3, hpScale: 0.8, atkScale: 0.45, exp: 5 },
+  { key: "golem", name: "ゴロ岩ゴーレム", baseHp: 9, baseAtk: 4, hpScale: 1.4, atkScale: 0.6, exp: 9 },
 ];
 
-const itemDropTable = [
-  { type: "riceBall", weight: 32 },
-  { type: "herb", weight: 34 },
-  { type: "woodenSword", weight: 24 },
-  { type: "ironSword", weight: 10 },
+const levelTable = [
+  { level: 1, nextExp: 8, maxHp: 20, atk: 5, def: 2 },
+  { level: 2, nextExp: 20, maxHp: 24, atk: 6, def: 2 },
+  { level: 3, nextExp: 38, maxHp: 29, atk: 7, def: 3 },
+  { level: 4, nextExp: 62, maxHp: 34, atk: 8, def: 3 },
+  { level: 5, nextExp: 92, maxHp: 40, atk: 9, def: 4 },
+  { level: 6, nextExp: 128, maxHp: 46, atk: 10, def: 4 },
+];
+
+const RECOVERY_PROGRESS_MAX = 24;
+
+const floorEnemyTables = [
+  { minFloor: 1, maxFloor: 1, count: [3, 4], entries: [{ type: "slime", weight: 100 }] },
+  { minFloor: 2, maxFloor: 2, count: [4, 5], entries: [{ type: "slime", weight: 75 }, { type: "bat", weight: 25 }] },
+  {
+    minFloor: 3,
+    maxFloor: 3,
+    count: [4, 5],
+    entries: [
+      { type: "slime", weight: 50 },
+      { type: "bat", weight: 40 },
+      { type: "golem", weight: 10 },
+    ],
+  },
+  {
+    minFloor: 4,
+    maxFloor: 4,
+    count: [5, 6],
+    entries: [
+      { type: "slime", weight: 35 },
+      { type: "bat", weight: 45 },
+      { type: "golem", weight: 20 },
+    ],
+  },
+  {
+    minFloor: 5,
+    maxFloor: 99,
+    count: [5, 7],
+    entries: [
+      { type: "slime", weight: 20 },
+      { type: "bat", weight: 45 },
+      { type: "golem", weight: 35 },
+    ],
+  },
+];
+
+const floorItemTables = [
+  {
+    minFloor: 1,
+    maxFloor: 1,
+    count: [3, 5],
+    entries: [
+      { type: "riceBall", weight: 36 },
+      { type: "herb", weight: 40 },
+      { type: "woodenSword", weight: 20 },
+      { type: "ironSword", weight: 4 },
+    ],
+  },
+  {
+    minFloor: 2,
+    maxFloor: 3,
+    count: [3, 5],
+    entries: [
+      { type: "riceBall", weight: 32 },
+      { type: "herb", weight: 34 },
+      { type: "woodenSword", weight: 24 },
+      { type: "ironSword", weight: 10 },
+    ],
+  },
+  {
+    minFloor: 4,
+    maxFloor: 99,
+    count: [3, 6],
+    entries: [
+      { type: "riceBall", weight: 30 },
+      { type: "herb", weight: 30 },
+      { type: "woodenSword", weight: 22 },
+      { type: "ironSword", weight: 18 },
+    ],
+  },
 ];
 
 const defeatReasons = {
@@ -208,6 +283,7 @@ const sound = {
 
 const ui = {
   floor: document.getElementById("floor"),
+  level: document.getElementById("level"),
   hp: document.getElementById("hp"),
   atk: document.getElementById("atk"),
   def: document.getElementById("def"),
@@ -244,12 +320,14 @@ const state = {
     x: 2,
     y: 2,
     direction: "down",
+    level: 1,
     hp: 20,
     maxHp: 20,
     atk: 5,
     def: 2,
     hunger: 100,
     exp: 0,
+    recoveryProgress: 0,
     inventoryLimit: 9,
     inventory: [],
     weapon: null,
@@ -263,6 +341,106 @@ function rng(min, max) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function levelEntry(level) {
+  return levelTable.find((entry) => entry.level === level) || levelTable[0];
+}
+
+function maxLevelEntry() {
+  return levelTable[levelTable.length - 1];
+}
+
+function nextLevelExp(level) {
+  const entry = levelEntry(level);
+  return entry.level >= maxLevelEntry().level ? null : entry.nextExp;
+}
+
+function expDisplayText() {
+  const requiredExp = nextLevelExp(state.player.level);
+  return requiredExp === null ? `${state.player.exp} / --` : `${state.player.exp} / ${requiredExp}`;
+}
+
+function canLevelUp() {
+  const requiredExp = nextLevelExp(state.player.level);
+  return requiredExp !== null && state.player.exp >= requiredExp;
+}
+
+function applyLevelUp(nextEntry) {
+  const previous = {
+    maxHp: state.player.maxHp,
+    atk: state.player.atk,
+    def: state.player.def,
+  };
+
+  state.player.level = nextEntry.level;
+  state.player.maxHp = nextEntry.maxHp;
+  state.player.hp = nextEntry.maxHp;
+  state.player.atk = nextEntry.atk;
+  state.player.def = nextEntry.def;
+
+  playSound("levelUp");
+  startFlash("rgba(250,204,21,0.2)", 160);
+  addFloatingText("Lv UP", state.player.x, state.player.y, "#fde68a");
+  addLog(`吾郎はレベル${state.player.level}になった！`);
+  addLog(`最大HP ${previous.maxHp}→${state.player.maxHp} / 攻撃 ${previous.atk}→${state.player.atk} / 守備 ${previous.def}→${state.player.def}`);
+}
+
+function gainExp(amount) {
+  if (!Number.isFinite(amount) || amount <= 0) return;
+
+  state.player.exp += amount;
+  addLog(`経験値を${amount}得た。`);
+
+  while (canLevelUp()) {
+    applyLevelUp(levelEntry(state.player.level + 1));
+  }
+}
+
+function recoveryGainForHunger(hunger) {
+  if (hunger >= 90) return 4;
+  if (hunger >= 70) return 3;
+  if (hunger >= 30) return 2;
+  return 0;
+}
+
+function tableForFloor(tables, floor) {
+  return tables.find((table) => floor >= table.minFloor && floor <= table.maxFloor) || tables[tables.length - 1];
+}
+
+function weightedPick(entries) {
+  const total = entries.reduce((sum, entry) => sum + entry.weight, 0);
+  let roll = rng(1, total);
+
+  for (const entry of entries) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.type;
+  }
+
+  return entries[0].type;
+}
+
+function monsterTypeByKey(key) {
+  return monsterTypes.find((type) => type.key === key) || monsterTypes[0];
+}
+
+function applyNaturalRecovery() {
+  if (state.player.hp <= 0) return;
+  if (state.player.hp >= state.player.maxHp) {
+    state.player.recoveryProgress = 0;
+    return;
+  }
+
+  const recoveryGain = recoveryGainForHunger(state.player.hunger);
+  if (recoveryGain <= 0) return;
+
+  state.player.recoveryProgress += recoveryGain;
+  if (state.player.recoveryProgress < RECOVERY_PROGRESS_MAX) return;
+
+  state.player.recoveryProgress = 0;
+  state.player.hp = Math.min(state.player.maxHp, state.player.hp + 1);
+  addFloatingText("+1", state.player.x, state.player.y, "#86efac");
+  addLog("吾郎のHPが少し回復した。");
 }
 
 function gridToWorldX(x) {
@@ -372,6 +550,12 @@ function playSound(name) {
   if (name === "defeat") {
     playTone(420, 0.08, "square", 0.1);
     playTone(260, 0.1, "square", 0.09, 0.08);
+    return;
+  }
+  if (name === "levelUp") {
+    playTone(523, 0.07, "triangle", 0.09);
+    playTone(659, 0.08, "triangle", 0.09, 0.06);
+    playTone(784, 0.12, "square", 0.08, 0.13);
     return;
   }
   if (name === "pickup") {
@@ -757,6 +941,19 @@ function carveRoom(map, x, y, w, h) {
   }
 }
 
+function createEnemy(type, x, y) {
+  const floorBonus = Math.max(0, state.floor - 1);
+  return {
+    x,
+    y,
+    hp: Math.round(type.baseHp + floorBonus * type.hpScale),
+    atk: Math.round(type.baseAtk + floorBonus * type.atkScale),
+    exp: type.exp,
+    name: type.name,
+    sprite: type.key,
+  };
+}
+
 function generateFloor() {
   const map = Array.from({ length: ROWS }, () => Array(COLS).fill("#"));
   const rooms = [];
@@ -790,19 +987,7 @@ function generateFloor() {
   const stairRoom = rooms[rooms.length - 1];
   state.stairs = { x: stairRoom.cx, y: stairRoom.cy };
 
-  state.enemies = rooms.slice(1, 6).map((room, i) => {
-    const type = monsterTypes[i % monsterTypes.length];
-    const floorBonus = Math.max(0, state.floor - 1);
-    return {
-      x: room.cx,
-      y: room.cy,
-      hp: Math.round(type.baseHp + floorBonus * type.hpScale),
-      atk: Math.round(type.baseAtk + floorBonus * type.atkScale),
-      name: type.name,
-      sprite: type.key,
-    };
-  });
-
+  placeEnemies(rooms);
   placeItems(rooms);
 }
 
@@ -817,6 +1002,13 @@ function enemyAt(x, y) {
 
 function itemAt(x, y) {
   return state.items.find((item) => item.x === x && item.y === y);
+}
+
+function isEnemyPlacementBlocked(x, y) {
+  if (!isWalkable(x, y)) return true;
+  if (state.player.x === x && state.player.y === y) return true;
+  if (state.stairs.x === x && state.stairs.y === y) return true;
+  return Boolean(enemyAt(x, y));
 }
 
 function equippedWeapon() {
@@ -835,16 +1027,28 @@ function playerAttackPower() {
   return state.player.atk + weaponAttackBonus();
 }
 
-function randomItemType() {
-  const total = itemDropTable.reduce((sum, entry) => sum + entry.weight, 0);
-  let roll = rng(1, total);
+function placeEnemies(rooms) {
+  state.enemies = [];
+  const table = tableForFloor(floorEnemyTables, state.floor);
+  const candidates = rooms.slice(1);
+  const count = rng(table.count[0], table.count[1]);
+  let attempts = 0;
 
-  for (const entry of itemDropTable) {
-    roll -= entry.weight;
-    if (roll <= 0) return entry.type;
+  while (state.enemies.length < count && attempts < 160 && candidates.length > 0) {
+    attempts += 1;
+    const room = candidates[rng(0, candidates.length - 1)];
+    const x = rng(room.x, room.x + room.w - 1);
+    const y = rng(room.y, room.y + room.h - 1);
+
+    if (isEnemyPlacementBlocked(x, y)) continue;
+    const type = monsterTypeByKey(weightedPick(table.entries));
+    state.enemies.push(createEnemy(type, x, y));
   }
+}
 
-  return itemDropTable[0].type;
+function randomItemType() {
+  const table = tableForFloor(floorItemTables, state.floor);
+  return weightedPick(table.entries);
 }
 
 function isItemPlacementBlocked(x, y) {
@@ -857,11 +1061,12 @@ function isItemPlacementBlocked(x, y) {
 
 function placeItems(rooms) {
   state.items = [];
+  const table = tableForFloor(floorItemTables, state.floor);
   const candidates = rooms.slice(1);
-  const count = rng(3, 6);
+  const count = rng(table.count[0], table.count[1]);
   let attempts = 0;
 
-  while (state.items.length < count && attempts < 120) {
+  while (state.items.length < count && attempts < 120 && candidates.length > 0) {
     attempts += 1;
     const room = candidates[rng(0, candidates.length - 1)];
     const x = rng(room.x, room.x + room.w - 1);
@@ -938,12 +1143,12 @@ function applyPlayerAttackHit(action) {
   addLog(`${enemy.name}に${action.result.damage}ダメージ。`);
 
   if (enemy.hp <= 0) {
-    state.player.exp += 3;
     state.stats.defeated += 1;
     playSound("defeat");
     addDefeatEffect(enemy.x, enemy.y);
     addFloatingText("撃破", enemy.x, enemy.y, "#fca5a5");
     addLog(`${enemy.name}をたおした！`);
+    gainExp(enemy.exp);
   }
 }
 
@@ -1024,13 +1229,18 @@ function tickTurn(options = {}) {
   if (state.player.hp <= 0) return;
   state.stats.turns += 1;
   state.player.hunger = Math.max(0, state.player.hunger - 1);
-  if (state.player.hunger === 0) {
+
+  const starved = state.player.hunger === 0;
+  if (starved) {
     state.player.hp = Math.max(0, state.player.hp - 1);
     addLog("満腹度が0！ 空腹ダメージ。");
     playSound("damage");
     handlePlayerDefeat(defeatReasons.hunger);
   }
   if (state.gameOver.active) return;
+  if (!starved) {
+    applyNaturalRecovery();
+  }
   if (!options.skipEnemies) {
     moveEnemies(options);
   }
@@ -1105,9 +1315,15 @@ function resetPlayerRunState() {
   state.gameOver.reason = "";
   state.stats.turns = 0;
   state.stats.defeated = 0;
+  const initialLevel = levelEntry(1);
+  state.player.level = initialLevel.level;
+  state.player.maxHp = initialLevel.maxHp;
   state.player.hp = state.player.maxHp;
+  state.player.atk = initialLevel.atk;
+  state.player.def = initialLevel.def;
   state.player.hunger = 100;
   state.player.exp = 0;
+  state.player.recoveryProgress = 0;
   state.player.direction = "down";
   state.player.inventory = [];
   state.player.weapon = null;
@@ -1649,7 +1865,7 @@ function drawGameOverLayer() {
   const fade = clamp(progress * 1.4, 0, 0.78);
   const panelAlpha = clamp((progress - 0.25) / 0.55, 0, 1);
   const panelWidth = 420;
-  const panelHeight = 292;
+  const panelHeight = 312;
   const panelX = Math.round((canvas.width - panelWidth) / 2);
   const panelY = Math.round((canvas.height - panelHeight) / 2);
   const reasonLines = splitTextByLength(state.gameOver.reason || defeatReasons.fallbackEnemy, 15);
@@ -1685,6 +1901,7 @@ function drawGameOverLayer() {
     ctx.font = "bold 15px 'Yu Gothic UI', sans-serif";
     const lines = [
       `到達階層: ${state.floor}F`,
+      `レベル: ${state.player.level}`,
       `撃破数: ${state.stats.defeated}`,
       `経験値: ${state.player.exp}`,
       `経過ターン: ${state.stats.turns}`,
@@ -1723,11 +1940,12 @@ function updateUi() {
   const weapon = equippedWeapon();
   const bonus = weaponAttackBonus();
   ui.floor.textContent = `${state.floor}F`;
+  ui.level.textContent = state.player.level;
   ui.hp.textContent = `${Math.max(0, state.player.hp)} / ${state.player.maxHp}`;
   ui.atk.textContent = bonus > 0 ? `${state.player.atk} + ${bonus}` : state.player.atk;
   ui.def.textContent = state.player.def;
   ui.hunger.textContent = state.player.hunger;
-  ui.exp.textContent = state.player.exp;
+  ui.exp.textContent = expDisplayText();
   ui.weapon.textContent = weapon ? itemTypes[weapon.type].name : "なし";
   renderInventory();
 }
