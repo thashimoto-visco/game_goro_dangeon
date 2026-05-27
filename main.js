@@ -217,6 +217,7 @@ const sound = {
 
 const ui = {
   floor: document.getElementById("floor"),
+  level: document.getElementById("level"),
   hp: document.getElementById("hp"),
   atk: document.getElementById("atk"),
   def: document.getElementById("def"),
@@ -289,6 +290,11 @@ function nextLevelExp(level) {
   return entry.level >= maxLevelEntry().level ? null : entry.nextExp;
 }
 
+function expDisplayText() {
+  const requiredExp = nextLevelExp(state.player.level);
+  return requiredExp === null ? `${state.player.exp} / --` : `${state.player.exp} / ${requiredExp}`;
+}
+
 function canLevelUp() {
   const requiredExp = nextLevelExp(state.player.level);
   return requiredExp !== null && state.player.exp >= requiredExp;
@@ -307,6 +313,8 @@ function applyLevelUp(nextEntry) {
   state.player.atk = nextEntry.atk;
   state.player.def = nextEntry.def;
 
+  playSound("levelUp");
+  startFlash("rgba(250,204,21,0.2)", 160);
   addFloatingText("Lv UP", state.player.x, state.player.y, "#fde68a");
   addLog(`吾郎はレベル${state.player.level}になった！`);
   addLog(`最大HP ${previous.maxHp}→${state.player.maxHp} / 攻撃 ${previous.atk}→${state.player.atk} / 守備 ${previous.def}→${state.player.def}`);
@@ -430,6 +438,12 @@ function playSound(name) {
   if (name === "defeat") {
     playTone(420, 0.08, "square", 0.1);
     playTone(260, 0.1, "square", 0.09, 0.08);
+    return;
+  }
+  if (name === "levelUp") {
+    playTone(523, 0.07, "triangle", 0.09);
+    playTone(659, 0.08, "triangle", 0.09, 0.06);
+    playTone(784, 0.12, "square", 0.08, 0.13);
     return;
   }
   if (name === "pickup") {
@@ -1714,7 +1728,7 @@ function drawGameOverLayer() {
   const fade = clamp(progress * 1.4, 0, 0.78);
   const panelAlpha = clamp((progress - 0.25) / 0.55, 0, 1);
   const panelWidth = 420;
-  const panelHeight = 292;
+  const panelHeight = 312;
   const panelX = Math.round((canvas.width - panelWidth) / 2);
   const panelY = Math.round((canvas.height - panelHeight) / 2);
   const reasonLines = splitTextByLength(state.gameOver.reason || defeatReasons.fallbackEnemy, 15);
@@ -1750,6 +1764,7 @@ function drawGameOverLayer() {
     ctx.font = "bold 15px 'Yu Gothic UI', sans-serif";
     const lines = [
       `到達階層: ${state.floor}F`,
+      `レベル: ${state.player.level}`,
       `撃破数: ${state.stats.defeated}`,
       `経験値: ${state.player.exp}`,
       `経過ターン: ${state.stats.turns}`,
@@ -1788,11 +1803,12 @@ function updateUi() {
   const weapon = equippedWeapon();
   const bonus = weaponAttackBonus();
   ui.floor.textContent = `${state.floor}F`;
+  ui.level.textContent = state.player.level;
   ui.hp.textContent = `${Math.max(0, state.player.hp)} / ${state.player.maxHp}`;
   ui.atk.textContent = bonus > 0 ? `${state.player.atk} + ${bonus}` : state.player.atk;
   ui.def.textContent = state.player.def;
   ui.hunger.textContent = state.player.hunger;
-  ui.exp.textContent = state.player.exp;
+  ui.exp.textContent = expDisplayText();
   ui.weapon.textContent = weapon ? itemTypes[weapon.type].name : "なし";
   renderInventory();
 }
