@@ -171,6 +171,8 @@ const levelTable = [
   { level: 6, nextExp: 128, maxHp: 46, atk: 10, def: 4 },
 ];
 
+const RECOVERY_PROGRESS_MAX = 24;
+
 const itemDropTable = [
   { type: "riceBall", weight: 32 },
   { type: "herb", weight: 34 },
@@ -261,7 +263,7 @@ const state = {
     def: 2,
     hunger: 100,
     exp: 0,
-    recoveryCounter: 0,
+    recoveryProgress: 0,
     inventoryLimit: 9,
     inventory: [],
     weapon: null,
@@ -329,6 +331,32 @@ function gainExp(amount) {
   while (canLevelUp()) {
     applyLevelUp(levelEntry(state.player.level + 1));
   }
+}
+
+function recoveryGainForHunger(hunger) {
+  if (hunger >= 90) return 4;
+  if (hunger >= 70) return 3;
+  if (hunger >= 30) return 2;
+  return 0;
+}
+
+function applyNaturalRecovery() {
+  if (state.player.hp <= 0) return;
+  if (state.player.hp >= state.player.maxHp) {
+    state.player.recoveryProgress = 0;
+    return;
+  }
+
+  const recoveryGain = recoveryGainForHunger(state.player.hunger);
+  if (recoveryGain <= 0) return;
+
+  state.player.recoveryProgress += recoveryGain;
+  if (state.player.recoveryProgress < RECOVERY_PROGRESS_MAX) return;
+
+  state.player.recoveryProgress = 0;
+  state.player.hp = Math.min(state.player.maxHp, state.player.hp + 1);
+  addFloatingText("+1", state.player.x, state.player.y, "#86efac");
+  addLog("吾郎のHPが少し回復した。");
 }
 
 function gridToWorldX(x) {
@@ -1097,13 +1125,18 @@ function tickTurn(options = {}) {
   if (state.player.hp <= 0) return;
   state.stats.turns += 1;
   state.player.hunger = Math.max(0, state.player.hunger - 1);
-  if (state.player.hunger === 0) {
+
+  const starved = state.player.hunger === 0;
+  if (starved) {
     state.player.hp = Math.max(0, state.player.hp - 1);
     addLog("満腹度が0！ 空腹ダメージ。");
     playSound("damage");
     handlePlayerDefeat(defeatReasons.hunger);
   }
   if (state.gameOver.active) return;
+  if (!starved) {
+    applyNaturalRecovery();
+  }
   if (!options.skipEnemies) {
     moveEnemies(options);
   }
@@ -1186,7 +1219,7 @@ function resetPlayerRunState() {
   state.player.def = initialLevel.def;
   state.player.hunger = 100;
   state.player.exp = 0;
-  state.player.recoveryCounter = 0;
+  state.player.recoveryProgress = 0;
   state.player.direction = "down";
   state.player.inventory = [];
   state.player.weapon = null;
