@@ -173,11 +173,75 @@ const levelTable = [
 
 const RECOVERY_PROGRESS_MAX = 24;
 
-const itemDropTable = [
-  { type: "riceBall", weight: 32 },
-  { type: "herb", weight: 34 },
-  { type: "woodenSword", weight: 24 },
-  { type: "ironSword", weight: 10 },
+const floorEnemyTables = [
+  { minFloor: 1, maxFloor: 1, count: [3, 4], entries: [{ type: "slime", weight: 100 }] },
+  { minFloor: 2, maxFloor: 2, count: [4, 5], entries: [{ type: "slime", weight: 75 }, { type: "bat", weight: 25 }] },
+  {
+    minFloor: 3,
+    maxFloor: 3,
+    count: [4, 5],
+    entries: [
+      { type: "slime", weight: 50 },
+      { type: "bat", weight: 40 },
+      { type: "golem", weight: 10 },
+    ],
+  },
+  {
+    minFloor: 4,
+    maxFloor: 4,
+    count: [5, 6],
+    entries: [
+      { type: "slime", weight: 35 },
+      { type: "bat", weight: 45 },
+      { type: "golem", weight: 20 },
+    ],
+  },
+  {
+    minFloor: 5,
+    maxFloor: 99,
+    count: [5, 7],
+    entries: [
+      { type: "slime", weight: 20 },
+      { type: "bat", weight: 45 },
+      { type: "golem", weight: 35 },
+    ],
+  },
+];
+
+const floorItemTables = [
+  {
+    minFloor: 1,
+    maxFloor: 1,
+    count: [3, 5],
+    entries: [
+      { type: "riceBall", weight: 36 },
+      { type: "herb", weight: 40 },
+      { type: "woodenSword", weight: 20 },
+      { type: "ironSword", weight: 4 },
+    ],
+  },
+  {
+    minFloor: 2,
+    maxFloor: 3,
+    count: [3, 5],
+    entries: [
+      { type: "riceBall", weight: 32 },
+      { type: "herb", weight: 34 },
+      { type: "woodenSword", weight: 24 },
+      { type: "ironSword", weight: 10 },
+    ],
+  },
+  {
+    minFloor: 4,
+    maxFloor: 99,
+    count: [3, 6],
+    entries: [
+      { type: "riceBall", weight: 30 },
+      { type: "herb", weight: 30 },
+      { type: "woodenSword", weight: 22 },
+      { type: "ironSword", weight: 18 },
+    ],
+  },
 ];
 
 const defeatReasons = {
@@ -338,6 +402,26 @@ function recoveryGainForHunger(hunger) {
   if (hunger >= 70) return 3;
   if (hunger >= 30) return 2;
   return 0;
+}
+
+function tableForFloor(tables, floor) {
+  return tables.find((table) => floor >= table.minFloor && floor <= table.maxFloor) || tables[tables.length - 1];
+}
+
+function weightedPick(entries) {
+  const total = entries.reduce((sum, entry) => sum + entry.weight, 0);
+  let roll = rng(1, total);
+
+  for (const entry of entries) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.type;
+  }
+
+  return entries[0].type;
+}
+
+function monsterTypeByKey(key) {
+  return monsterTypes.find((type) => type.key === key) || monsterTypes[0];
 }
 
 function applyNaturalRecovery() {
@@ -857,6 +941,19 @@ function carveRoom(map, x, y, w, h) {
   }
 }
 
+function createEnemy(type, x, y) {
+  const floorBonus = Math.max(0, state.floor - 1);
+  return {
+    x,
+    y,
+    hp: Math.round(type.baseHp + floorBonus * type.hpScale),
+    atk: Math.round(type.baseAtk + floorBonus * type.atkScale),
+    exp: type.exp,
+    name: type.name,
+    sprite: type.key,
+  };
+}
+
 function generateFloor() {
   const map = Array.from({ length: ROWS }, () => Array(COLS).fill("#"));
   const rooms = [];
@@ -890,20 +987,7 @@ function generateFloor() {
   const stairRoom = rooms[rooms.length - 1];
   state.stairs = { x: stairRoom.cx, y: stairRoom.cy };
 
-  state.enemies = rooms.slice(1, 6).map((room, i) => {
-    const type = monsterTypes[i % monsterTypes.length];
-    const floorBonus = Math.max(0, state.floor - 1);
-    return {
-      x: room.cx,
-      y: room.cy,
-      hp: Math.round(type.baseHp + floorBonus * type.hpScale),
-      atk: Math.round(type.baseAtk + floorBonus * type.atkScale),
-      exp: type.exp,
-      name: type.name,
-      sprite: type.key,
-    };
-  });
-
+  placeEnemies(rooms);
   placeItems(rooms);
 }
 
@@ -918,6 +1002,13 @@ function enemyAt(x, y) {
 
 function itemAt(x, y) {
   return state.items.find((item) => item.x === x && item.y === y);
+}
+
+function isEnemyPlacementBlocked(x, y) {
+  if (!isWalkable(x, y)) return true;
+  if (state.player.x === x && state.player.y === y) return true;
+  if (state.stairs.x === x && state.stairs.y === y) return true;
+  return Boolean(enemyAt(x, y));
 }
 
 function equippedWeapon() {
@@ -936,16 +1027,28 @@ function playerAttackPower() {
   return state.player.atk + weaponAttackBonus();
 }
 
-function randomItemType() {
-  const total = itemDropTable.reduce((sum, entry) => sum + entry.weight, 0);
-  let roll = rng(1, total);
+function placeEnemies(rooms) {
+  state.enemies = [];
+  const table = tableForFloor(floorEnemyTables, state.floor);
+  const candidates = rooms.slice(1);
+  const count = rng(table.count[0], table.count[1]);
+  let attempts = 0;
 
-  for (const entry of itemDropTable) {
-    roll -= entry.weight;
-    if (roll <= 0) return entry.type;
+  while (state.enemies.length < count && attempts < 160 && candidates.length > 0) {
+    attempts += 1;
+    const room = candidates[rng(0, candidates.length - 1)];
+    const x = rng(room.x, room.x + room.w - 1);
+    const y = rng(room.y, room.y + room.h - 1);
+
+    if (isEnemyPlacementBlocked(x, y)) continue;
+    const type = monsterTypeByKey(weightedPick(table.entries));
+    state.enemies.push(createEnemy(type, x, y));
   }
+}
 
-  return itemDropTable[0].type;
+function randomItemType() {
+  const table = tableForFloor(floorItemTables, state.floor);
+  return weightedPick(table.entries);
 }
 
 function isItemPlacementBlocked(x, y) {
@@ -958,11 +1061,12 @@ function isItemPlacementBlocked(x, y) {
 
 function placeItems(rooms) {
   state.items = [];
+  const table = tableForFloor(floorItemTables, state.floor);
   const candidates = rooms.slice(1);
-  const count = rng(3, 6);
+  const count = rng(table.count[0], table.count[1]);
   let attempts = 0;
 
-  while (state.items.length < count && attempts < 120) {
+  while (state.items.length < count && attempts < 120 && candidates.length > 0) {
     attempts += 1;
     const room = candidates[rng(0, candidates.length - 1)];
     const x = rng(room.x, room.x + room.w - 1);
