@@ -1,6 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="スライム系モンスター">
-  <path d="M10 42c0-13 9-24 22-24s22 11 22 24c0 6-4 12-22 12S10 48 10 42z" fill="#5eead4" stroke="#0f766e" stroke-width="3"/>
-  <circle cx="24" cy="38" r="4" fill="#0f172a"/>
-  <circle cx="40" cy="38" r="4" fill="#0f172a"/>
-  <path d="M24 46q8 5 16 0" stroke="#0f172a" stroke-width="3" fill="none" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="ぬるりスライム">
+  <path d="M9 42c0-14 10-25 23-25s23 11 23 25c0 8-6 13-23 13S9 50 9 42z" fill="#2dd4bf" stroke="#0f766e" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M14 42c1 6 8 9 18 9s17-3 18-9c-4 4-10 6-18 6s-14-2-18-6z" fill="#14b8a6" opacity="0.65"/>
+  <path d="M19 31c3-6 9-9 16-9" stroke="#99f6e4" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
+  <path d="M23 35c2-2 5-3 8-3" stroke="#ccfbf1" stroke-width="2" stroke-linecap="round" opacity="0.85"/>
+  <circle cx="24" cy="39" r="5" fill="#0f172a"/>
+  <circle cx="40" cy="39" r="5" fill="#0f172a"/>
+  <circle cx="22" cy="37" r="1.6" fill="#f8fafc"/>
+  <circle cx="38" cy="37" r="1.6" fill="#f8fafc"/>
+  <path d="M25 47q7 5 14 0" stroke="#0f172a" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <circle cx="18" cy="43" r="2" fill="#5eead4" opacity="0.85"/>
+  <circle cx="48" cy="44" r="1.6" fill="#5eead4" opacity="0.75"/>
 </svg>
