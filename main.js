@@ -4,12 +4,30 @@ const ROWS = 30;
 const MAX_DELTA = 100;
 const PLAYER_DRAW = { offsetX: -22, offsetY: -92, w: 44, h: 92 };
 const ENEMY_DRAW = {
-  slime: { offsetX: -20, offsetY: -36, w: 40, h: 34 },
-  bat: { offsetX: -27, offsetY: -54, w: 54, h: 42 },
-  golem: { offsetX: -29, offsetY: -66, w: 58, h: 66 },
+  slime: { offsetX: -23, offsetY: -42, w: 46, h: 40 },
+  bat: { offsetX: -31, offsetY: -58, w: 62, h: 50 },
+  golem: { offsetX: -38, offsetY: -82, w: 76, h: 82 },
   fallback: { offsetX: -24, offsetY: -58, w: 48, h: 58 },
 };
+const ENEMY_IDLE = {
+  slime: { cycle: 760, bob: 1, scaleX: 1.04, scaleY: 0.94, anchor: 0.88, shadowX: 17, shadowY: 6 },
+  bat: { cycle: 520, bob: 3, scaleX: 1.03, scaleY: 0.97, anchor: 0.92, shadowX: 14, shadowY: 4, shadowOffsetY: 8 },
+  golem: { cycle: 980, bob: 1, scaleX: 1.012, scaleY: 0.992, anchor: 0.95, shadowX: 27, shadowY: 8 },
+  fallback: { cycle: 760, bob: 1, scaleX: 1.02, scaleY: 0.98, anchor: 0.92, shadowX: 16, shadowY: 5 },
+};
 const STAIRS_DRAW = { offsetX: 8, offsetY: 8, w: 16, h: 16 };
+const ITEM_DRAW = {
+  size: 22,
+  offsetX: 5,
+  offsetY: 5,
+  shadowX: 11,
+  shadowY: 4,
+  glow: {
+    weapon: "rgba(250, 204, 21, 0.2)",
+    food: "rgba(248, 250, 252, 0.18)",
+    potion: "rgba(34, 197, 94, 0.2)",
+  },
+};
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -1367,18 +1385,29 @@ function drawMonsterShape(enemy, px, py, draw = ENEMY_DRAW.fallback) {
   const footY = py + draw.h;
 
   if (enemy.sprite === "slime") {
-    ctx.fillStyle = "#5eead4";
+    ctx.fillStyle = "#2dd4bf";
     ctx.beginPath();
     ctx.ellipse(centerX, footY - 10, draw.w / 2, draw.h / 3, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = "rgba(20,184,166,0.65)";
+    ctx.beginPath();
+    ctx.ellipse(centerX, footY - 7, draw.w / 2.6, draw.h / 5, 0, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = "#0f172a";
-    ctx.fillRect(centerX - 7, footY - 13, 4, 4);
-    ctx.fillRect(centerX + 4, footY - 13, 4, 4);
+    ctx.beginPath();
+    ctx.arc(centerX - 7, footY - 13, 3.5, 0, Math.PI * 2);
+    ctx.arc(centerX + 7, footY - 13, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(centerX, footY - 8, 7, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.stroke();
     return;
   }
 
   if (enemy.sprite === "bat") {
-    ctx.fillStyle = "#a78bfa";
+    ctx.fillStyle = "#8b5cf6";
     ctx.beginPath();
     ctx.moveTo(px + 3, py + draw.h * 0.55);
     ctx.lineTo(centerX - 6, py + 8);
@@ -1389,14 +1418,79 @@ function drawMonsterShape(enemy, px, py, draw = ENEMY_DRAW.fallback) {
     ctx.lineTo(centerX - 6, py + draw.h * 0.72);
     ctx.closePath();
     ctx.fill();
+    ctx.fillStyle = "#111827";
+    ctx.beginPath();
+    ctx.arc(centerX - 5, py + draw.h * 0.62, 2.5, 0, Math.PI * 2);
+    ctx.arc(centerX + 5, py + draw.h * 0.62, 2.5, 0, Math.PI * 2);
+    ctx.fill();
     return;
   }
 
   ctx.fillStyle = "#f59e0b";
-  ctx.fillRect(px + 5, py + 5, draw.w - 10, draw.h - 8);
+  ctx.beginPath();
+  drawRoundRectPath(px + 5, py + 5, draw.w - 10, draw.h - 8, 8);
+  ctx.fill();
+  ctx.fillStyle = "rgba(180,83,9,0.65)";
+  ctx.fillRect(px + 8, py + draw.h - 17, draw.w - 16, 8);
   ctx.fillStyle = "#111827";
-  ctx.fillRect(centerX - 8, py + 18, 4, 4);
-  ctx.fillRect(centerX + 4, py + 18, 4, 4);
+  ctx.beginPath();
+  drawRoundRectPath(centerX - 11, py + 21, 7, 7, 3);
+  drawRoundRectPath(centerX + 4, py + 21, 7, 7, 3);
+  ctx.fill();
+}
+
+function drawRoundRectPath(x, y, w, h, r) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+}
+
+function enemyIdleFrame(enemy, idle) {
+  const spriteOffset = enemy.sprite.length * 29;
+  const positionOffset = enemy.x * 41 + enemy.y * 53;
+  const phase = Math.floor((runtime.elapsed + spriteOffset + positionOffset) / idle.cycle) % 2;
+  return phase === 0 ? 0 : 1;
+}
+
+function drawEnemyShadow(position, draw, idle, frame) {
+  const footX = position.x + draw.w / 2;
+  const footY = position.y + draw.h + (idle.shadowOffsetY || 0);
+  const pulse = frame ? 0.92 : 1;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(3, 7, 18, 0.34)";
+  ctx.beginPath();
+  ctx.ellipse(footX, footY - 2, idle.shadowX * pulse, idle.shadowY * pulse, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawEnemySpriteWithIdle(enemy, sprite, position, draw, idle) {
+  const frame = enemyIdleFrame(enemy, idle);
+  const bob = frame ? -idle.bob : 0;
+  const scaleX = frame ? idle.scaleX : 1;
+  const scaleY = frame ? idle.scaleY : 1;
+  const anchorY = draw.h * idle.anchor;
+
+  drawEnemyShadow(position, draw, idle, frame);
+
+  ctx.save();
+  ctx.translate(position.x + draw.w / 2, position.y + anchorY + bob);
+  ctx.scale(scaleX, scaleY);
+  const didDraw = drawSprite(sprite, -draw.w / 2, -anchorY, draw.w, draw.h);
+  if (!didDraw) {
+    drawMonsterShape(enemy, -draw.w / 2, -anchorY, draw);
+  }
+  ctx.restore();
+
+  return didDraw;
 }
 
 function drawPlayerShape(px, py) {
@@ -1524,6 +1618,14 @@ function drawMapLayer() {
 function drawStairsLayer() {
   const sx = gridToScreenX(state.stairs.x) + STAIRS_DRAW.offsetX;
   const sy = gridToScreenY(state.stairs.y) + STAIRS_DRAW.offsetY;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(56, 189, 248, 0.16)";
+  ctx.beginPath();
+  ctx.ellipse(gridToScreenX(state.stairs.x) + TILE / 2, gridToScreenY(state.stairs.y) + TILE / 2 + 2, 15, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
   const didDraw = drawSprite(
     sprites.tiles.stairsDown,
     gridToScreenX(state.stairs.x),
@@ -1542,20 +1644,37 @@ function drawItemLayer() {
     const itemType = itemTypes[item.type];
     const sx = gridToScreenX(item.x);
     const sy = gridToScreenY(item.y);
-    const iconX = sx + 6;
-    const iconY = sy + 6;
+    const iconX = sx + ITEM_DRAW.offsetX;
+    const iconY = sy + ITEM_DRAW.offsetY;
 
     ctx.save();
-    ctx.fillStyle = "rgba(250, 204, 21, 0.18)";
+    ctx.fillStyle = ITEM_DRAW.glow[itemType.kind] || "rgba(250, 204, 21, 0.18)";
     ctx.beginPath();
-    ctx.ellipse(sx + TILE / 2, sy + TILE - 8, 11, 5, 0, 0, Math.PI * 2);
+    ctx.arc(sx + TILE / 2, sy + TILE / 2, 13, 0, Math.PI * 2);
     ctx.fill();
 
-    const didDraw = drawSprite(sprites.icons[itemType.icon], iconX, iconY, 20, 20);
+    ctx.fillStyle = "rgba(3, 7, 18, 0.28)";
+    ctx.beginPath();
+    ctx.ellipse(sx + TILE / 2, sy + TILE - 7, ITEM_DRAW.shadowX, ITEM_DRAW.shadowY, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const didDraw = drawSprite(sprites.icons[itemType.icon], iconX, iconY, ITEM_DRAW.size, ITEM_DRAW.size);
     if (!didDraw) {
       ctx.fillStyle = itemType.kind === "weapon" ? "#d6b15f" : itemType.kind === "food" ? "#f97316" : "#22c55e";
       ctx.beginPath();
-      ctx.arc(sx + TILE / 2, sy + TILE / 2, 8, 0, Math.PI * 2);
+      if (itemType.kind === "weapon") {
+        ctx.moveTo(sx + 10, sy + 23);
+        ctx.lineTo(sx + 22, sy + 9);
+        ctx.lineTo(sx + 24, sy + 12);
+        ctx.lineTo(sx + 12, sy + 25);
+      } else if (itemType.kind === "food") {
+        ctx.moveTo(sx + 16, sy + 7);
+        ctx.lineTo(sx + 26, sy + 25);
+        ctx.lineTo(sx + 6, sy + 25);
+        ctx.closePath();
+      } else {
+        ctx.arc(sx + TILE / 2, sy + TILE / 2, 8, 0, Math.PI * 2);
+      }
       ctx.fill();
     }
     ctx.restore();
@@ -1599,16 +1718,14 @@ function actorDrawPosition(actor, draw) {
 
 function drawEnemyActor(enemy) {
   const draw = ENEMY_DRAW[enemy.sprite] || ENEMY_DRAW.fallback;
+  const idle = ENEMY_IDLE[enemy.sprite] || ENEMY_IDLE.fallback;
   const position = actorDrawPosition(enemy, draw);
   const sprite = sprites.monsters[enemy.sprite];
   ctx.save();
   if (enemy.hitTime > 0 && Math.floor(enemy.hitTime / 45) % 2 === 0) {
     ctx.globalAlpha = 0.55;
   }
-  const didDraw = drawSprite(sprite, position.x, position.y, draw.w, draw.h);
-  if (!didDraw) {
-    drawMonsterShape(enemy, position.x, position.y, draw);
-  }
+  drawEnemySpriteWithIdle(enemy, sprite, position, draw, idle);
   ctx.restore();
 }
 
@@ -1785,10 +1902,12 @@ function drawInventoryMenu() {
   const selected = currentInventoryItem();
 
   ctx.save();
-  ctx.fillStyle = "rgba(6, 8, 13, 0.62)";
+  ctx.fillStyle = "rgba(6, 8, 13, 0.68)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#111827";
   ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+  ctx.fillStyle = "rgba(9, 13, 20, 0.7)";
+  ctx.fillRect(panelX + 10, panelY + 10, panelWidth - 20, panelHeight - 20);
   ctx.strokeStyle = "#d6b15f";
   ctx.lineWidth = 3;
   ctx.strokeRect(panelX + 2, panelY + 2, panelWidth - 4, panelHeight - 4);
@@ -1814,12 +1933,14 @@ function drawInventoryMenu() {
       const isSelected = index === state.menu.selectedIndex;
 
       if (isSelected) {
-        ctx.fillStyle = "rgba(214, 177, 95, 0.22)";
+        ctx.fillStyle = "rgba(214, 177, 95, 0.24)";
         ctx.fillRect(panelX + 22, rowY - 12, panelWidth - 44, 22);
+        ctx.fillStyle = "#facc15";
+        ctx.fillText(">", panelX + 24, rowY);
       }
 
       ctx.fillStyle = isSelected ? "#f8fafc" : "#dbeafe";
-      ctx.fillText(`${index + 1}. ${itemType.name}`, panelX + 34, rowY);
+      ctx.fillText(`${index + 1}. ${itemType.name}`, panelX + 42, rowY);
 
       if (state.player.weapon === item.id) {
         ctx.fillStyle = "#facc15";
@@ -1828,7 +1949,7 @@ function drawInventoryMenu() {
     }
   }
 
-  ctx.fillStyle = "#0b1018";
+  ctx.fillStyle = "#090d14";
   ctx.fillRect(panelX + 22, panelY + 235, panelWidth - 44, 48);
   ctx.strokeStyle = "#6b4e27";
   ctx.lineWidth = 2;
@@ -1878,6 +1999,8 @@ function drawGameOverLayer() {
     ctx.globalAlpha = panelAlpha;
     ctx.fillStyle = "#111827";
     ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+    ctx.fillStyle = "rgba(9, 13, 20, 0.72)";
+    ctx.fillRect(panelX + 10, panelY + 10, panelWidth - 20, panelHeight - 20);
     ctx.strokeStyle = "#d6b15f";
     ctx.lineWidth = 3;
     ctx.strokeRect(panelX + 2, panelY + 2, panelWidth - 4, panelHeight - 4);

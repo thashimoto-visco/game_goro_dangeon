@@ -1,5 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="コウモリ系モンスター">
-  <path d="M6 30l16-8 10 8 10-8 16 8-10 10-10-4-6 10-6-10-10 4z" fill="#a78bfa" stroke="#5b21b6" stroke-width="3"/>
-  <circle cx="26" cy="31" r="2.5" fill="#111827"/>
-  <circle cx="38" cy="31" r="2.5" fill="#111827"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="バサバサコウモリ">
+  <path d="M7 30l13-9 8 8 4-8 4 8 8-8 13 9-7 12-10-5-8 11-8-11-10 5z" fill="#8b5cf6" stroke="#4c1d95" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M12 31l9-5 7 8-12 3zM52 31l-9-5-7 8 12 3z" fill="#c4b5fd" opacity="0.8"/>
+  <path d="M24 29l8-8 8 8v9c0 5-3 9-8 9s-8-4-8-9z" fill="#7c3aed" stroke="#4c1d95" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M25 27l-3-7 7 4M39 27l3-7-7 4" fill="#a78bfa" stroke="#4c1d95" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="28" cy="35" r="3.3" fill="#111827"/>
+  <circle cx="36" cy="35" r="3.3" fill="#111827"/>
+  <circle cx="27" cy="34" r="1.1" fill="#f8fafc"/>
+  <circle cx="35" cy="34" r="1.1" fill="#f8fafc"/>
+  <path d="M29 41q3 2 6 0" stroke="#f8fafc" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+  <path d="M22 39l-4 5M42 39l4 5" stroke="#4c1d95" stroke-width="2" stroke-linecap="round"/>
 </svg>
