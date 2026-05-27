@@ -283,6 +283,7 @@ Topic 1では新規アイテムを増やさず、既存アイテムの出現率�
 - Step 3: [UIとレベルアップ演出](step3-ui-levelup-feedback-plan.md)
 - Step 4: [HP自然回復](step4-natural-recovery-plan.md)
 - Step 5: [階層別出現テーブル](step5-floor-spawn-tables-plan.md)
+- Step 6: [1F-5F確認とドキュメント更新](step6-balance-docs-verification-plan.md)
 
 ## 受け入れ条件
 
