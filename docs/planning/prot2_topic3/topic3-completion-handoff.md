@@ -12,6 +12,8 @@ Topic 3「イベントと特殊部屋」は、最小実装として宝物部屋�
 
 - イベント部屋用の `state.eventRooms`。
 - イベントオブジェクト用の `state.eventObjects`。
+- イベント部屋タイプ定義 `eventRoomTypes`。
+- イベントオブジェクトタイプ定義 `eventObjectTypes`。
 - 階層別イベント抽選テーブル。
 - 宝物部屋。
 - 宝物部屋の追加アイテム配置。
@@ -24,6 +26,50 @@ Topic 3「イベントと特殊部屋」は、最小実装として宝物部屋�
 - イベントオブジェクトと敵、アイテム、階段、開始位置の重なり回避。
 - README更新。
 - 手動テストチェックリスト更新。
+
+## 新規イベント部屋追加ひな形
+
+新しい部屋は、まず `eventRoomTypes` にタイプ定義を追加する。
+
+```js
+eventRoomTypes.trap = {
+  roomColor: "rgba(248, 113, 113, 0.12)",
+  onDiscover(eventRoom) {
+    addLog("いやな気配がする部屋だ。");
+    playSound("damage");
+    startFlash("rgba(248,113,113,0.14)", 140);
+  },
+  placeObjects(eventRoom) {
+    // 必要なら state.eventObjects に罠などを置く。
+  },
+  placeRewards(eventRoom) {
+    // 必要なら報酬を置く。
+  },
+};
+```
+
+マス上に置くオブジェクトがある場合は、`eventObjectTypes` に発火と描画を追加する。
+
+```js
+eventObjectTypes.trap = {
+  onStep(object) {
+    // プレイヤーが踏んだ時の効果。
+  },
+  draw(object) {
+    // Canvas上の見た目。
+  },
+};
+```
+
+最後に `floorEventTables` の `entries` に `{ type: "trap", weight: 10 }` のように追加する。
+
+基本的には、以下の3箇所を触ればよい。
+
+- `eventRoomTypes`
+- `eventObjectTypes`、マス上オブジェクトがある場合のみ
+- `floorEventTables`
+
+宝物部屋のように報酬テーブルが必要な場合は、専用テーブルと配置関数を追加する。
 
 ## 現在のイベント出現方針
 
@@ -88,4 +134,3 @@ Topic 4「強敵と階層メリハリ」では、今回追加したイベント�
 - `event-room-plan.md`
 - `../prot2_topic2/step6-addition-template-handoff-plan.md`
 - `../mid-term-topic-roadmap.md`
-

@@ -317,6 +317,42 @@ const treasureRewardTables = [
   },
 ];
 
+const eventRoomTypes = {
+  treasure: {
+    roomColor: "rgba(250, 204, 21, 0.13)",
+    onDiscover() {
+      addLog("宝物の気配がする部屋だ。");
+      playSound("treasure");
+      startFlash("rgba(250,204,21,0.16)", 140);
+    },
+    placeRewards(eventRoom) {
+      placeTreasureRoomRewards(eventRoom);
+    },
+  },
+  spring: {
+    roomColor: "rgba(45, 212, 191, 0.12)",
+    onDiscover() {
+      addLog("澄んだ水音が聞こえる。");
+      playSound("spring");
+      startFlash("rgba(45,212,191,0.14)", 140);
+    },
+    placeObjects(eventRoom) {
+      placeSpringObject(eventRoom);
+    },
+  },
+};
+
+const eventObjectTypes = {
+  spring: {
+    onStep(object) {
+      handleSpringObject(object);
+    },
+    draw(object) {
+      drawSpringObject(object);
+    },
+  },
+};
+
 const defeatReasons = {
   hunger: "吾郎は空腹で倒れた",
   enemy: {
@@ -1065,6 +1101,14 @@ function eventTableForCurrentFloor() {
   return tableForFloor(floorEventTables, state.floor);
 }
 
+function eventRoomType(type) {
+  return eventRoomTypes[type] || null;
+}
+
+function eventObjectType(type) {
+  return eventObjectTypes[type] || null;
+}
+
 function treasureRewardTableForCurrentFloor() {
   return tableForFloor(treasureRewardTables, state.floor);
 }
@@ -1124,8 +1168,9 @@ function placeSpringObject(eventRoom) {
 
 function placeEventObjects() {
   for (const eventRoom of state.eventRooms) {
-    if (eventRoom.type === "spring") {
-      placeSpringObject(eventRoom);
+    const definition = eventRoomType(eventRoom.type);
+    if (definition && definition.placeObjects) {
+      definition.placeObjects(eventRoom);
     }
   }
 }
@@ -1289,8 +1334,9 @@ function placeTreasureRoomRewards(eventRoom) {
 
 function placeEventRewards() {
   for (const eventRoom of state.eventRooms) {
-    if (eventRoom.type === "treasure") {
-      placeTreasureRoomRewards(eventRoom);
+    const definition = eventRoomType(eventRoom.type);
+    if (definition && definition.placeRewards) {
+      definition.placeRewards(eventRoom);
     }
   }
 }
@@ -1463,17 +1509,9 @@ function handleEventRoomDiscoveryAtPlayer() {
   if (!eventRoom || eventRoom.discovered) return;
 
   eventRoom.discovered = true;
-  if (eventRoom.type === "treasure") {
-    addLog("宝物の気配がする部屋だ。");
-    playSound("treasure");
-    startFlash("rgba(250,204,21,0.16)", 140);
-    return;
-  }
-
-  if (eventRoom.type === "spring") {
-    addLog("澄んだ水音が聞こえる。");
-    playSound("spring");
-    startFlash("rgba(45,212,191,0.14)", 140);
+  const definition = eventRoomType(eventRoom.type);
+  if (definition && definition.onDiscover) {
+    definition.onDiscover(eventRoom);
   }
 }
 
@@ -1502,8 +1540,9 @@ function handleEventObjectAtPlayer() {
   const object = eventObjectAt(state.player.x, state.player.y);
   if (!object) return;
 
-  if (object.type === "spring") {
-    handleSpringObject(object);
+  const definition = eventObjectType(object.type);
+  if (definition && definition.onStep) {
+    definition.onStep(object);
   }
 }
 
@@ -1864,9 +1903,8 @@ function drawMapLayer() {
 }
 
 function eventRoomColor(type) {
-  if (type === "treasure") return "rgba(250, 204, 21, 0.13)";
-  if (type === "spring") return "rgba(45, 212, 191, 0.12)";
-  return "rgba(255, 255, 255, 0.08)";
+  const definition = eventRoomType(type);
+  return definition && definition.roomColor ? definition.roomColor : "rgba(255, 255, 255, 0.08)";
 }
 
 function drawEventRoomLayer() {
@@ -1942,8 +1980,9 @@ function drawSpringObject(object) {
 
 function drawEventObjectLayer() {
   for (const object of state.eventObjects) {
-    if (object.type === "spring") {
-      drawSpringObject(object);
+    const definition = eventObjectType(object.type);
+    if (definition && definition.draw) {
+      definition.draw(object);
     }
   }
 }
