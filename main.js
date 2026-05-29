@@ -262,6 +262,61 @@ const floorItemTables = [
   },
 ];
 
+const floorEventTables = [
+  {
+    minFloor: 1,
+    maxFloor: 1,
+    chance: 18,
+    entries: [
+      { type: "treasure", weight: 60 },
+      { type: "spring", weight: 40 },
+    ],
+  },
+  {
+    minFloor: 2,
+    maxFloor: 3,
+    chance: 28,
+    entries: [
+      { type: "treasure", weight: 55 },
+      { type: "spring", weight: 45 },
+    ],
+  },
+  {
+    minFloor: 4,
+    maxFloor: 99,
+    chance: 35,
+    entries: [
+      { type: "treasure", weight: 50 },
+      { type: "spring", weight: 50 },
+    ],
+  },
+];
+
+const treasureRewardTables = [
+  {
+    minFloor: 1,
+    maxFloor: 3,
+    count: [2, 2],
+    entries: [
+      { type: "riceBall", weight: 30 },
+      { type: "herb", weight: 34 },
+      { type: "woodenSword", weight: 26 },
+      { type: "ironSword", weight: 10 },
+    ],
+  },
+  {
+    minFloor: 4,
+    maxFloor: 99,
+    count: [2, 2],
+    entries: [
+      { type: "riceBall", weight: 26 },
+      { type: "herb", weight: 30 },
+      { type: "woodenSword", weight: 24 },
+      { type: "ironSword", weight: 20 },
+    ],
+  },
+];
+
 const defeatReasons = {
   hunger: "吾郎は空腹で倒れた",
   enemy: {
@@ -273,6 +328,7 @@ const defeatReasons = {
 };
 
 let nextItemId = 1;
+let nextEventId = 1;
 let inventoryRenderKey = "";
 
 const effects = [];
@@ -318,6 +374,8 @@ const state = {
   map: [],
   enemies: [],
   items: [],
+  eventRooms: [],
+  eventObjects: [],
   stairs: { x: 0, y: 0 },
   action: null,
   gameOver: {
@@ -574,6 +632,16 @@ function playSound(name) {
     playTone(523, 0.07, "triangle", 0.09);
     playTone(659, 0.08, "triangle", 0.09, 0.06);
     playTone(784, 0.12, "square", 0.08, 0.13);
+    return;
+  }
+  if (name === "treasure") {
+    playTone(659, 0.06, "triangle", 0.08);
+    playTone(880, 0.08, "triangle", 0.08, 0.07);
+    return;
+  }
+  if (name === "spring") {
+    playTone(349, 0.09, "sine", 0.07);
+    playTone(523, 0.11, "sine", 0.07, 0.08);
     return;
   }
   if (name === "pickup") {
@@ -972,6 +1040,96 @@ function createEnemy(type, x, y) {
   };
 }
 
+function isSameRoom(a, b) {
+  return a && b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+}
+
+function roomsOverlap(a, b) {
+  if (!a || !b) return false;
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function roomContains(room, x, y) {
+  return x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h;
+}
+
+function eventRoomAt(x, y) {
+  return state.eventRooms.find((eventRoom) => roomContains(eventRoom.room, x, y));
+}
+
+function eventObjectAt(x, y) {
+  return state.eventObjects.find((object) => object.x === x && object.y === y);
+}
+
+function eventTableForCurrentFloor() {
+  return tableForFloor(floorEventTables, state.floor);
+}
+
+function treasureRewardTableForCurrentFloor() {
+  return tableForFloor(treasureRewardTables, state.floor);
+}
+
+function selectEventRooms(rooms, startRoom, stairRoom) {
+  state.eventRooms = [];
+  state.eventObjects = [];
+
+  const table = eventTableForCurrentFloor();
+  if (rng(1, 100) > table.chance) return;
+
+  const candidates = rooms.filter((room) => {
+    if (isSameRoom(room, startRoom) || isSameRoom(room, stairRoom)) return false;
+    if (roomsOverlap(room, startRoom) || roomsOverlap(room, stairRoom)) return false;
+    return room.w >= 6 && room.h >= 5;
+  });
+  if (candidates.length === 0) return;
+
+  const room = candidates[rng(0, candidates.length - 1)];
+  state.eventRooms.push({
+    id: nextEventId,
+    type: weightedPick(table.entries),
+    room,
+    discovered: false,
+  });
+  nextEventId += 1;
+}
+
+function eventObjectPlacementBlocked(x, y) {
+  if (!isWalkable(x, y)) return true;
+  if (state.player.x === x && state.player.y === y) return true;
+  if (state.stairs.x === x && state.stairs.y === y) return true;
+  return Boolean(eventObjectAt(x, y));
+}
+
+function placeSpringObject(eventRoom) {
+  const positions = [
+    { x: eventRoom.room.cx, y: eventRoom.room.cy },
+    { x: eventRoom.room.cx - 1, y: eventRoom.room.cy },
+    { x: eventRoom.room.cx + 1, y: eventRoom.room.cy },
+    { x: eventRoom.room.cx, y: eventRoom.room.cy - 1 },
+    { x: eventRoom.room.cx, y: eventRoom.room.cy + 1 },
+  ];
+
+  const position = positions.find((entry) => !eventObjectPlacementBlocked(entry.x, entry.y));
+  if (!position) return;
+
+  state.eventObjects.push({
+    id: nextEventId,
+    type: "spring",
+    x: position.x,
+    y: position.y,
+    used: false,
+  });
+  nextEventId += 1;
+}
+
+function placeEventObjects() {
+  for (const eventRoom of state.eventRooms) {
+    if (eventRoom.type === "spring") {
+      placeSpringObject(eventRoom);
+    }
+  }
+}
+
 function generateFloor() {
   const map = Array.from({ length: ROWS }, () => Array(COLS).fill("#"));
   const rooms = [];
@@ -1005,8 +1163,11 @@ function generateFloor() {
   const stairRoom = rooms[rooms.length - 1];
   state.stairs = { x: stairRoom.cx, y: stairRoom.cy };
 
+  selectEventRooms(rooms, start, stairRoom);
+  placeEventObjects();
   placeEnemies(rooms);
   placeItems(rooms);
+  placeEventRewards();
 }
 
 function isWalkable(x, y) {
@@ -1026,6 +1187,7 @@ function isEnemyPlacementBlocked(x, y) {
   if (!isWalkable(x, y)) return true;
   if (state.player.x === x && state.player.y === y) return true;
   if (state.stairs.x === x && state.stairs.y === y) return true;
+  if (eventObjectAt(x, y)) return true;
   return Boolean(enemyAt(x, y));
 }
 
@@ -1073,6 +1235,7 @@ function isItemPlacementBlocked(x, y) {
   if (!isWalkable(x, y)) return true;
   if (state.player.x === x && state.player.y === y) return true;
   if (state.stairs.x === x && state.stairs.y === y) return true;
+  if (eventObjectAt(x, y)) return true;
   if (enemyAt(x, y)) return true;
   return Boolean(itemAt(x, y));
 }
@@ -1098,6 +1261,37 @@ function placeItems(rooms) {
       y,
     });
     nextItemId += 1;
+  }
+}
+
+function placeTreasureRoomRewards(eventRoom) {
+  const table = treasureRewardTableForCurrentFloor();
+  const count = rng(table.count[0], table.count[1]);
+  let placed = 0;
+  let attempts = 0;
+
+  while (placed < count && attempts < 80) {
+    attempts += 1;
+    const x = rng(eventRoom.room.x, eventRoom.room.x + eventRoom.room.w - 1);
+    const y = rng(eventRoom.room.y, eventRoom.room.y + eventRoom.room.h - 1);
+
+    if (isItemPlacementBlocked(x, y)) continue;
+    state.items.push({
+      id: nextItemId,
+      type: weightedPick(table.entries),
+      x,
+      y,
+    });
+    nextItemId += 1;
+    placed += 1;
+  }
+}
+
+function placeEventRewards() {
+  for (const eventRoom of state.eventRooms) {
+    if (eventRoom.type === "treasure") {
+      placeTreasureRoomRewards(eventRoom);
+    }
   }
 }
 
@@ -1264,6 +1458,55 @@ function tickTurn(options = {}) {
   }
 }
 
+function handleEventRoomDiscoveryAtPlayer() {
+  const eventRoom = eventRoomAt(state.player.x, state.player.y);
+  if (!eventRoom || eventRoom.discovered) return;
+
+  eventRoom.discovered = true;
+  if (eventRoom.type === "treasure") {
+    addLog("宝物の気配がする部屋だ。");
+    playSound("treasure");
+    startFlash("rgba(250,204,21,0.16)", 140);
+    return;
+  }
+
+  if (eventRoom.type === "spring") {
+    addLog("澄んだ水音が聞こえる。");
+    playSound("spring");
+    startFlash("rgba(45,212,191,0.14)", 140);
+  }
+}
+
+function handleSpringObject(object) {
+  if (object.used) {
+    addLog("泉は静まり返っている。");
+    return;
+  }
+
+  if (state.player.hp >= state.player.maxHp) {
+    addLog("泉の水は静かに揺れている。");
+    return;
+  }
+
+  const before = state.player.hp;
+  const healAmount = Math.max(8, Math.floor(state.player.maxHp * 0.35));
+  state.player.hp = Math.min(state.player.maxHp, state.player.hp + healAmount);
+  object.used = true;
+  addFloatingText(`+${state.player.hp - before}`, state.player.x, state.player.y, "#5eead4");
+  playSound("spring");
+  startFlash("rgba(45,212,191,0.22)", 180);
+  addLog(`泉の水が吾郎をいやした。HP ${before}→${state.player.hp}。`);
+}
+
+function handleEventObjectAtPlayer() {
+  const object = eventObjectAt(state.player.x, state.player.y);
+  if (!object) return;
+
+  if (object.type === "spring") {
+    handleSpringObject(object);
+  }
+}
+
 function pickUpItemAtPlayer() {
   const item = itemAt(state.player.x, state.player.y);
   if (!item) return false;
@@ -1327,6 +1570,8 @@ function useInventorySlot(slotIndex) {
 function resetPlayerRunState() {
   state.floor = 1;
   state.items = [];
+  state.eventRooms = [];
+  state.eventObjects = [];
   state.action = null;
   state.gameOver.active = false;
   state.gameOver.age = 0;
@@ -1346,6 +1591,7 @@ function resetPlayerRunState() {
   state.player.inventory = [];
   state.player.weapon = null;
   nextItemId = 1;
+  nextEventId = 1;
   inventoryRenderKey = "";
 }
 
@@ -1367,6 +1613,8 @@ function tryMove(dx, dy) {
   state.player.y = ny;
   playSound("move");
   pickUpItemAtPlayer();
+  handleEventRoomDiscoveryAtPlayer();
+  handleEventObjectAtPlayer();
 
   if (nx === state.stairs.x && ny === state.stairs.y) {
     state.floor += 1;
@@ -1615,6 +1863,26 @@ function drawMapLayer() {
   }
 }
 
+function eventRoomColor(type) {
+  if (type === "treasure") return "rgba(250, 204, 21, 0.13)";
+  if (type === "spring") return "rgba(45, 212, 191, 0.12)";
+  return "rgba(255, 255, 255, 0.08)";
+}
+
+function drawEventRoomLayer() {
+  for (const eventRoom of state.eventRooms) {
+    ctx.save();
+    ctx.fillStyle = eventRoomColor(eventRoom.type);
+    for (let y = eventRoom.room.y; y < eventRoom.room.y + eventRoom.room.h; y++) {
+      for (let x = eventRoom.room.x; x < eventRoom.room.x + eventRoom.room.w; x++) {
+        if (!isWalkable(x, y)) continue;
+        ctx.fillRect(gridToScreenX(x) + 2, gridToScreenY(y) + 2, TILE - 4, TILE - 4);
+      }
+    }
+    ctx.restore();
+  }
+}
+
 function drawStairsLayer() {
   const sx = gridToScreenX(state.stairs.x) + STAIRS_DRAW.offsetX;
   const sy = gridToScreenY(state.stairs.y) + STAIRS_DRAW.offsetY;
@@ -1636,6 +1904,47 @@ function drawStairsLayer() {
   if (!didDraw) {
     ctx.fillStyle = "#93c5fd";
     ctx.fillRect(sx, sy, STAIRS_DRAW.w, STAIRS_DRAW.h);
+  }
+}
+
+function drawSpringObject(object) {
+  const sx = gridToScreenX(object.x);
+  const sy = gridToScreenY(object.y);
+  const pulse = object.used ? 0 : Math.sin(runtime.elapsed / 240) * 1.5;
+  const alpha = object.used ? 0.38 : 0.78;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = object.used ? "rgba(15, 118, 110, 0.22)" : "rgba(45, 212, 191, 0.22)";
+  ctx.beginPath();
+  ctx.arc(sx + TILE / 2, sy + TILE / 2, 13 + pulse, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = object.used ? "#134e4a" : "#67e8f9";
+  ctx.beginPath();
+  ctx.ellipse(sx + TILE / 2, sy + TILE / 2 + 2, 11, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = object.used ? "#0f766e" : "#ccfbf1";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(sx + TILE / 2, sy + TILE / 2 + 2, 12, 7, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = object.used ? "rgba(20, 184, 166, 0.32)" : "rgba(240, 253, 250, 0.72)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(sx + 10, sy + 16);
+  ctx.quadraticCurveTo(sx + 16, sy + 13 + pulse, sx + 22, sy + 16);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawEventObjectLayer() {
+  for (const object of state.eventObjects) {
+    if (object.type === "spring") {
+      drawSpringObject(object);
+    }
   }
 }
 
@@ -2049,7 +2358,9 @@ function draw() {
   ctx.save();
   applyCameraShake();
   drawMapLayer();
+  drawEventRoomLayer();
   drawStairsLayer();
+  drawEventObjectLayer();
   drawItemLayer();
   drawActorLayer();
   drawEffectsLayer();
