@@ -3,17 +3,51 @@ const COLS = 40;
 const ROWS = 30;
 const MAX_DELTA = 100;
 const PLAYER_DRAW = { offsetX: -22, offsetY: -92, w: 44, h: 92 };
-const ENEMY_DRAW = {
-  slime: { offsetX: -23, offsetY: -42, w: 46, h: 40 },
-  bat: { offsetX: -31, offsetY: -58, w: 62, h: 50 },
-  golem: { offsetX: -38, offsetY: -82, w: 76, h: 82 },
-  fallback: { offsetX: -24, offsetY: -58, w: 48, h: 58 },
+const PLAYER_MOTION = {
+  idleCycle: 980,
+  walkBob: 4,
+  attackTilt: 0.12,
+  damageDuration: 220,
+  damageKnockback: 6,
 };
-const ENEMY_IDLE = {
-  slime: { cycle: 760, bob: 1, scaleX: 1.04, scaleY: 0.94, anchor: 0.88, shadowX: 17, shadowY: 6 },
-  bat: { cycle: 520, bob: 3, scaleX: 1.03, scaleY: 0.97, anchor: 0.92, shadowX: 14, shadowY: 4, shadowOffsetY: 8 },
-  golem: { cycle: 980, bob: 1, scaleX: 1.012, scaleY: 0.992, anchor: 0.95, shadowX: 27, shadowY: 8 },
-  fallback: { cycle: 760, bob: 1, scaleX: 1.02, scaleY: 0.98, anchor: 0.92, shadowX: 16, shadowY: 5 },
+const DEFAULT_MONSTER_DRAW = { offsetX: -24, offsetY: -58, w: 48, h: 58 };
+const DEFAULT_MONSTER_MOTION = {
+  cycle: 760,
+  bob: 1,
+  floatOffset: 0,
+  scaleX: 1.02,
+  scaleY: 0.98,
+  flapScaleX: 0,
+  flapScaleY: 0,
+  anchor: 0.92,
+  shadowX: 16,
+  shadowY: 5,
+  shadowOffsetY: 0,
+  shadowBase: 1,
+  shadowPulse: -0.08,
+  wobble: 0.035,
+  hitScaleX: 1.08,
+  hitScaleY: 0.92,
+  hitRotation: 0.09,
+  attackScaleX: 1.04,
+  attackScaleY: 1.02,
+  attackRotation: 0.07,
+  attackShadowPulse: 0.06,
+};
+const DEFAULT_MONSTER_SHAPE = {
+  kind: "block",
+  fill: "#f59e0b",
+  shade: "rgba(180,83,9,0.65)",
+  eye: "#111827",
+};
+const DEFAULT_MONSTER_BURST = {
+  kind: "chunks",
+  hitColor: "#b45309",
+  attackColor: "#fbbf24",
+  count: 6,
+  size: 3,
+  hitSpread: 16,
+  attackSpread: 11,
 };
 const STAIRS_DRAW = { offsetX: 8, offsetY: 8, w: 16, h: 16 };
 const ITEM_DRAW = {
@@ -36,6 +70,45 @@ const appConfig = {
   assetBaseUrl: "",
   ...(window.GORO_DUNGEON_CONFIG || {}),
 };
+
+function mergeMonsterProfile(base, override) {
+  return { ...base, ...(override || {}) };
+}
+
+function buildMonsterDefinitions(catalog) {
+  const entries = Array.isArray(catalog) ? catalog : [];
+  return Object.fromEntries(
+    entries
+      .filter((entry) => entry && entry.key)
+      .map((entry) => [
+        entry.key,
+        {
+          ...entry,
+          stats: { ...(entry.stats || {}) },
+          draw: mergeMonsterProfile(DEFAULT_MONSTER_DRAW, entry.draw),
+          motion: mergeMonsterProfile(DEFAULT_MONSTER_MOTION, entry.motion),
+          fallbackShape: mergeMonsterProfile(DEFAULT_MONSTER_SHAPE, entry.fallbackShape),
+          burst: mergeMonsterProfile(DEFAULT_MONSTER_BURST, entry.burst),
+        },
+      ])
+  );
+}
+
+const monsterDefinitions = buildMonsterDefinitions(window.GORO_DUNGEON_MONSTER_CATALOG);
+const monsterCatalog = Object.values(monsterDefinitions);
+const fallbackMonsterDefinition = {
+  key: "fallback",
+  name: "名もなき魔物",
+  stats: { baseHp: 5, baseAtk: 2, hpScale: 1, atkScale: 0.4, exp: 4 },
+  draw: DEFAULT_MONSTER_DRAW,
+  motion: DEFAULT_MONSTER_MOTION,
+  fallbackShape: DEFAULT_MONSTER_SHAPE,
+  burst: DEFAULT_MONSTER_BURST,
+};
+
+function monsterDefinitionByKey(key) {
+  return monsterDefinitions[key] || monsterCatalog[0] || fallbackMonsterDefinition;
+}
 
 function resolveAssetUrl(path) {
   if (/^(?:https?:|data:|blob:|file:)/.test(path)) return path;
@@ -69,11 +142,9 @@ const images = {
     food: createImage("assets/icons/item_food.svg"),
     potion: createImage("assets/icons/item_potion.svg"),
   },
-  monsters: {
-    slime: createImage("assets/monster_slime.svg"),
-    bat: createImage("assets/monster_bat.svg"),
-    golem: createImage("assets/monster_golem.svg"),
-  },
+  monsters: Object.fromEntries(
+    monsterCatalog.map((monster) => [monster.key, monster.asset ? createImage(monster.asset) : null])
+  ),
 };
 
 const sprites = {
@@ -131,11 +202,7 @@ const sprites = {
     food: { image: images.icons.food },
     potion: { image: images.icons.potion },
   },
-  monsters: {
-    slime: { image: images.monsters.slime },
-    bat: { image: images.monsters.bat },
-    golem: { image: images.monsters.golem },
-  },
+  monsters: Object.fromEntries(monsterCatalog.map((monster) => [monster.key, { image: images.monsters[monster.key] }])),
 };
 
 const runtime = {
@@ -174,11 +241,11 @@ const itemTypes = {
   },
 };
 
-const monsterTypes = [
-  { key: "slime", name: "ぬるりスライム", baseHp: 5, baseAtk: 2, hpScale: 1, atkScale: 0.35, exp: 4 },
-  { key: "bat", name: "バサバサコウモリ", baseHp: 4, baseAtk: 3, hpScale: 0.8, atkScale: 0.45, exp: 5 },
-  { key: "golem", name: "ゴロ岩ゴーレム", baseHp: 9, baseAtk: 4, hpScale: 1.4, atkScale: 0.6, exp: 9 },
-];
+const monsterTypes = monsterCatalog.map((monster) => ({
+  key: monster.key,
+  name: monster.name,
+  ...monster.stats,
+}));
 
 const levelTable = [
   { level: 1, nextExp: 8, maxHp: 20, atk: 5, def: 2 },
@@ -191,40 +258,22 @@ const levelTable = [
 
 const RECOVERY_PROGRESS_MAX = 24;
 
-const floorEnemyTables = [
-  { minFloor: 1, maxFloor: 1, count: [3, 4], entries: [{ type: "slime", weight: 100 }] },
-  { minFloor: 2, maxFloor: 2, count: [4, 5], entries: [{ type: "slime", weight: 75 }, { type: "bat", weight: 25 }] },
-  {
-    minFloor: 3,
-    maxFloor: 3,
-    count: [4, 5],
-    entries: [
-      { type: "slime", weight: 50 },
-      { type: "bat", weight: 40 },
-      { type: "golem", weight: 10 },
-    ],
-  },
-  {
-    minFloor: 4,
-    maxFloor: 4,
-    count: [5, 6],
-    entries: [
-      { type: "slime", weight: 35 },
-      { type: "bat", weight: 45 },
-      { type: "golem", weight: 20 },
-    ],
-  },
-  {
-    minFloor: 5,
-    maxFloor: 99,
-    count: [5, 7],
-    entries: [
-      { type: "slime", weight: 20 },
-      { type: "bat", weight: 45 },
-      { type: "golem", weight: 35 },
-    ],
-  },
-];
+function buildEnemySpawnTables(tables) {
+  const catalogKeys = new Set(monsterCatalog.map((monster) => monster.key));
+  const normalized = Array.isArray(tables) ? tables : [];
+  const spawnTables = normalized
+    .map((table) => ({
+      ...table,
+      count: Array.isArray(table.count) ? table.count : [3, 4],
+      entries: (table.entries || []).filter((entry) => catalogKeys.has(entry.type) && entry.weight > 0),
+    }))
+    .filter((table) => table.entries.length > 0);
+  if (spawnTables.length > 0) return spawnTables;
+  const fallbackKey = monsterCatalog[0]?.key || fallbackMonsterDefinition.key;
+  return [{ minFloor: 1, maxFloor: 99, count: [3, 4], entries: [{ type: fallbackKey, weight: 100 }] }];
+}
+
+const floorEnemyTables = buildEnemySpawnTables(window.GORO_DUNGEON_ENEMY_SPAWN_TABLES);
 
 const floorItemTables = [
   {
@@ -355,11 +404,6 @@ const eventObjectTypes = {
 
 const defeatReasons = {
   hunger: "吾郎は空腹で倒れた",
-  enemy: {
-    slime: "吾郎はぬるぬるになった",
-    bat: "吾郎はバサバサになった",
-    golem: "吾郎はゴロ岩につぶされてしまった",
-  },
   fallbackEnemy: "吾郎は力尽きた",
 };
 
@@ -408,6 +452,11 @@ const ui = {
 const state = {
   floor: 1,
   map: [],
+  tileKinds: [],
+  rooms: [],
+  corridors: [],
+  doorways: [],
+  visibleTiles: new Set(),
   enemies: [],
   items: [],
   eventRooms: [],
@@ -444,6 +493,9 @@ const state = {
     inventory: [],
     weapon: null,
     motion: null,
+    hitTime: 0,
+    hitDuration: 0,
+    hitDirection: "down",
   },
 };
 
@@ -533,7 +585,15 @@ function weightedPick(entries) {
 }
 
 function monsterTypeByKey(key) {
-  return monsterTypes.find((type) => type.key === key) || monsterTypes[0];
+  const fallbackStats = fallbackMonsterDefinition.stats;
+  return (
+    monsterTypes.find((type) => type.key === key) ||
+    monsterTypes[0] || {
+      key: fallbackMonsterDefinition.key,
+      name: fallbackMonsterDefinition.name,
+      ...fallbackStats,
+    }
+  );
 }
 
 function applyNaturalRecovery() {
@@ -764,7 +824,7 @@ function setPlayerDirection(dx, dy) {
 }
 
 function canAcceptInput() {
-  return !state.action && !state.gameOver.active && !isMenuOpen();
+  return !state.action && !state.player.motion && !state.gameOver.active && !isMenuOpen();
 }
 
 function isMenuOpen() {
@@ -783,6 +843,12 @@ function startPlayerWalk(fromX, fromY, toX, toY) {
   };
 }
 
+function startPlayerDamage(direction = state.player.direction) {
+  state.player.hitTime = PLAYER_MOTION.damageDuration;
+  state.player.hitDuration = PLAYER_MOTION.damageDuration;
+  state.player.hitDirection = direction;
+}
+
 function clearPlayerMotion() {
   state.player.motion = null;
 }
@@ -795,6 +861,10 @@ function updatePlayerMotion(delta) {
   if (motion.age >= motion.duration) {
     clearPlayerMotion();
   }
+}
+
+function updatePlayerReaction(delta) {
+  state.player.hitTime = Math.max(0, (state.player.hitTime || 0) - delta);
 }
 
 function getPlayerVisualGrid() {
@@ -889,6 +959,18 @@ function addDefeatEffect(x, y) {
   });
 }
 
+function addMonsterBurstEffect(enemy, variant = "hit") {
+  effects.push({
+    type: "monsterBurst",
+    variant,
+    sprite: enemy.sprite,
+    x: enemy.x,
+    y: enemy.y,
+    age: 0,
+    duration: variant === "attack" ? 180 : 220,
+  });
+}
+
 function startCameraShake(duration = 120, strength = 2) {
   camera.shakeTime = duration;
   camera.shakeDuration = duration;
@@ -915,6 +997,8 @@ function clearTransientVisuals() {
   camera.shakeDuration = 0;
   overlay.flashTime = 0;
   overlay.flashDuration = 0;
+  state.player.hitTime = 0;
+  state.player.hitDuration = 0;
 }
 
 function currentWeaponName() {
@@ -1011,7 +1095,7 @@ function handleMenuInput(key) {
 
 function defeatReasonFromEnemy(enemy) {
   if (!enemy) return defeatReasons.fallbackEnemy;
-  return defeatReasons.enemy[enemy.sprite] || `${enemy.name}に倒された`;
+  return monsterDefinitionByKey(enemy.sprite).defeatText || `${enemy.name}に倒された`;
 }
 
 function startGameOver(reason) {
@@ -1055,10 +1139,23 @@ function updateCameraTarget() {
   camera.y = clamp(playerCenterY - canvas.height / 2, 0, Math.max(0, mapHeight - canvas.height));
 }
 
-function carveRoom(map, x, y, w, h) {
-  for (let yy = y; yy < y + h; yy++) {
-    for (let xx = x; xx < x + w; xx++) {
+function createEmptyMap() {
+  return Array.from({ length: ROWS }, () => Array(COLS).fill("#"));
+}
+
+function createEmptyTileKinds() {
+  return Array.from({ length: ROWS }, () => Array(COLS).fill("wall"));
+}
+
+function inBounds(x, y) {
+  return x >= 0 && y >= 0 && x < COLS && y < ROWS;
+}
+
+function carveRoom(map, tileKinds, room) {
+  for (let yy = room.y; yy < room.y + room.h; yy++) {
+    for (let xx = room.x; xx < room.x + room.w; xx++) {
       map[yy][xx] = ".";
+      tileKinds[yy][xx] = "room";
     }
   }
 }
@@ -1085,8 +1182,132 @@ function roomsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+function roomsOverlapWithPadding(a, b, padding = 1) {
+  if (!a || !b) return false;
+  return (
+    a.x - padding < b.x + b.w &&
+    a.x + a.w + padding > b.x &&
+    a.y - padding < b.y + b.h &&
+    a.y + a.h + padding > b.y
+  );
+}
+
 function roomContains(room, x, y) {
   return x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h;
+}
+
+function tileKey(x, y) {
+  return `${x},${y}`;
+}
+
+function roomAt(x, y) {
+  return state.rooms.find((room) => roomContains(room, x, y)) || null;
+}
+
+function tileKindAt(x, y) {
+  if (!inBounds(x, y) || !state.tileKinds[y]) return "wall";
+  return state.tileKinds[y][x] || "wall";
+}
+
+function corridorAt(x, y) {
+  return (
+    state.corridors.find((corridor) =>
+      corridor.tiles.some((tile) => tile.x === x && tile.y === y)
+    ) || null
+  );
+}
+
+function doorwayById(id) {
+  return state.doorways.find((doorway) => doorway.id === id) || null;
+}
+
+function addVisibleTile(visibleTiles, x, y) {
+  if (inBounds(x, y)) {
+    visibleTiles.add(tileKey(x, y));
+  }
+}
+
+function addVisibleTileWithWalls(visibleTiles, x, y) {
+  addVisibleTile(visibleTiles, x, y);
+  for (const direction of [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+  ]) {
+    const nx = x + direction.dx;
+    const ny = y + direction.dy;
+    if (inBounds(nx, ny) && state.map[ny][nx] === "#") {
+      addVisibleTile(visibleTiles, nx, ny);
+    }
+  }
+}
+
+function addRoomVisibility(visibleTiles, room) {
+  for (let y = room.y; y < room.y + room.h; y++) {
+    for (let x = room.x; x < room.x + room.w; x++) {
+      addVisibleTileWithWalls(visibleTiles, x, y);
+    }
+  }
+
+  for (const doorwayId of room.doorways) {
+    const doorway = doorwayById(doorwayId);
+    if (!doorway) continue;
+    addVisibleTileWithWalls(visibleTiles, doorway.x, doorway.y);
+    addVisibleTileWithWalls(visibleTiles, doorway.outsideX, doorway.outsideY);
+  }
+}
+
+function corridorTileIndex(corridor, x, y) {
+  return corridor.tiles.findIndex((tile) => tile.x === x && tile.y === y);
+}
+
+function addCorridorVisibility(visibleTiles, corridor, x, y) {
+  const index = corridorTileIndex(corridor, x, y);
+  if (index < 0) return;
+
+  const viewDistance = 4;
+  const start = Math.max(0, index - viewDistance);
+  const end = Math.min(corridor.tiles.length - 1, index + viewDistance);
+  const corridorDoorwayTileKeys = new Set(
+    state.doorways
+      .filter((entry) => entry.corridorId === corridor.id)
+      .map((entry) => tileKey(entry.x, entry.y))
+  );
+
+  for (let i = start; i <= end; i++) {
+    const tile = corridor.tiles[i];
+    if (tileKindAt(tile.x, tile.y) === "doorway" && !corridorDoorwayTileKeys.has(tileKey(tile.x, tile.y))) {
+      continue;
+    }
+    addVisibleTileWithWalls(visibleTiles, tile.x, tile.y);
+  }
+
+  for (const doorway of state.doorways.filter((entry) => entry.corridorId === corridor.id)) {
+    if (Math.abs(doorway.outsideX - x) + Math.abs(doorway.outsideY - y) <= 1) {
+      addVisibleTileWithWalls(visibleTiles, doorway.outsideX, doorway.outsideY);
+    }
+  }
+}
+
+function computeVisibleTiles() {
+  const visibleTiles = new Set();
+  const playerRoom = roomAt(state.player.x, state.player.y);
+  const playerCorridor = corridorAt(state.player.x, state.player.y);
+
+  if (playerRoom) {
+    addRoomVisibility(visibleTiles, playerRoom);
+  } else if (playerCorridor) {
+    addCorridorVisibility(visibleTiles, playerCorridor, state.player.x, state.player.y);
+  } else {
+    addVisibleTileWithWalls(visibleTiles, state.player.x, state.player.y);
+  }
+
+  state.visibleTiles = visibleTiles;
+}
+
+function isVisibleTile(x, y) {
+  return state.visibleTiles.has(tileKey(x, y));
 }
 
 function eventRoomAt(x, y) {
@@ -1175,48 +1396,285 @@ function placeEventObjects() {
   }
 }
 
-function generateFloor() {
-  const map = Array.from({ length: ROWS }, () => Array(COLS).fill("#"));
+function createRoom(id) {
+  const w = rng(5, 9);
+  const h = rng(4, 7);
+  const x = rng(2, COLS - w - 3);
+  const y = rng(2, ROWS - h - 3);
+  return { id, x, y, w, h, cx: x + Math.floor(w / 2), cy: y + Math.floor(h / 2), doorways: [] };
+}
+
+function buildRooms() {
   const rooms = [];
+  const targetCount = rng(6, 7);
+  let attempts = 0;
 
-  for (let i = 0; i < 14; i++) {
-    const w = rng(5, 9);
-    const h = rng(4, 7);
-    const x = rng(1, COLS - w - 2);
-    const y = rng(1, ROWS - h - 2);
-
-    carveRoom(map, x, y, w, h);
-    rooms.push({ x, y, w, h, cx: x + Math.floor(w / 2), cy: y + Math.floor(h / 2) });
+  while (rooms.length < targetCount && attempts < 260) {
+    attempts += 1;
+    const room = createRoom(rooms.length + 1);
+    if (rooms.some((entry) => roomsOverlapWithPadding(room, entry, 3))) continue;
+    rooms.push(room);
   }
 
-  rooms.sort((a, b) => a.cx - b.cx);
-  for (let i = 1; i < rooms.length; i++) {
-    const a = rooms[i - 1];
-    const b = rooms[i];
-    for (let x = Math.min(a.cx, b.cx); x <= Math.max(a.cx, b.cx); x++) map[a.cy][x] = ".";
-    for (let y = Math.min(a.cy, b.cy); y <= Math.max(a.cy, b.cy); y++) map[y][b.cx] = ".";
+  if (rooms.length < 2) {
+    return [
+      { id: 1, x: 3, y: 4, w: 8, h: 6, cx: 7, cy: 7, doorways: [] },
+      { id: 2, x: 27, y: 19, w: 8, h: 6, cx: 31, cy: 22, doorways: [] },
+    ];
   }
 
-  state.map = map;
+  return rooms;
+}
+
+function doorwayForRoomToward(room, target) {
+  const dx = target.cx - room.cx;
+  const dy = target.cy - room.cy;
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const x = dx >= 0 ? room.x + room.w - 1 : room.x;
+    const outsideX = dx >= 0 ? x + 1 : x - 1;
+    const y = clamp(target.cy, room.y + 1, room.y + room.h - 2);
+    return { x, y, outsideX, outsideY: y };
+  }
+
+  const y = dy >= 0 ? room.y + room.h - 1 : room.y;
+  const outsideY = dy >= 0 ? y + 1 : y - 1;
+  const x = clamp(target.cx, room.x + 1, room.x + room.w - 2);
+  return { x, y, outsideX: x, outsideY };
+}
+
+function shuffledDirections() {
+  const directions = [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+  ];
+
+  for (let i = directions.length - 1; i > 0; i--) {
+    const j = rng(0, i);
+    [directions[i], directions[j]] = [directions[j], directions[i]];
+  }
+
+  return directions;
+}
+
+function touchesRoomTile(x, y, tileKinds) {
+  for (const direction of [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+  ]) {
+    const nx = x + direction.dx;
+    const ny = y + direction.dy;
+    if (inBounds(nx, ny) && tileKinds[ny][nx] === "room") return true;
+  }
+
+  return false;
+}
+
+function canUseCorridorTile(x, y, tileKinds, allowedRoomTouchKeys) {
+  if (!inBounds(x, y)) return false;
+  if (tileKinds[y][x] === "room") return false;
+  if (!touchesRoomTile(x, y, tileKinds)) return true;
+  return allowedRoomTouchKeys.has(`${x},${y}`);
+}
+
+function corridorTilesBetween(from, to, tileKinds, allowedRoomTouchKeys) {
+  const queue = [from];
+  const visited = new Set([`${from.x},${from.y}`]);
+  const cameFrom = new Map();
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (current.x === to.x && current.y === to.y) {
+      const path = [current];
+      let key = `${current.x},${current.y}`;
+
+      while (cameFrom.has(key)) {
+        const previous = cameFrom.get(key);
+        path.push(previous);
+        key = `${previous.x},${previous.y}`;
+      }
+
+      return path.reverse();
+    }
+
+    for (const direction of shuffledDirections()) {
+      const next = { x: current.x + direction.dx, y: current.y + direction.dy };
+      const key = `${next.x},${next.y}`;
+      if (visited.has(key)) continue;
+      if (!canUseCorridorTile(next.x, next.y, tileKinds, allowedRoomTouchKeys)) continue;
+
+      visited.add(key);
+      cameFrom.set(key, current);
+      queue.push(next);
+    }
+  }
+
+  return [];
+}
+
+function carveCorridor(map, tileKinds, corridor) {
+  for (const tile of corridor.tiles) {
+    if (!inBounds(tile.x, tile.y)) continue;
+    map[tile.y][tile.x] = ".";
+    if (tileKinds[tile.y][tile.x] === "wall") {
+      tileKinds[tile.y][tile.x] = "corridor";
+    }
+  }
+}
+
+function connectRooms(map, tileKinds, rooms) {
+  const corridors = [];
+  const doorways = [];
+  rooms.sort((a, b) => a.cx - b.cx || a.cy - b.cy);
+
+  for (let index = 1; index < rooms.length; index++) {
+    const fromRoom = rooms[index - 1];
+    const toRoom = rooms[index];
+    const fromDoor = doorwayForRoomToward(fromRoom, toRoom);
+    const toDoor = doorwayForRoomToward(toRoom, fromRoom);
+    const corridorId = corridors.length + 1;
+    const allowedRoomTouchKeys = new Set([
+      `${fromDoor.outsideX},${fromDoor.outsideY}`,
+      `${toDoor.outsideX},${toDoor.outsideY}`,
+    ]);
+    const corridor = {
+      id: corridorId,
+      fromRoomId: fromRoom.id,
+      toRoomId: toRoom.id,
+      tiles: corridorTilesBetween(
+        { x: fromDoor.outsideX, y: fromDoor.outsideY },
+        { x: toDoor.outsideX, y: toDoor.outsideY },
+        tileKinds,
+        allowedRoomTouchKeys
+      ),
+    };
+
+    const fromDoorway = {
+      id: doorways.length + 1,
+      roomId: fromRoom.id,
+      corridorId,
+      x: fromDoor.x,
+      y: fromDoor.y,
+      outsideX: fromDoor.outsideX,
+      outsideY: fromDoor.outsideY,
+    };
+    const toDoorway = {
+      id: doorways.length + 2,
+      roomId: toRoom.id,
+      corridorId,
+      x: toDoor.x,
+      y: toDoor.y,
+      outsideX: toDoor.outsideX,
+      outsideY: toDoor.outsideY,
+    };
+
+    corridors.push(corridor);
+    doorways.push(fromDoorway, toDoorway);
+    fromRoom.doorways.push(fromDoorway.id);
+    toRoom.doorways.push(toDoorway.id);
+
+    carveCorridor(map, tileKinds, corridor);
+    tileKinds[fromDoor.y][fromDoor.x] = "doorway";
+    tileKinds[toDoor.y][toDoor.x] = "doorway";
+  }
+
+  return { corridors, doorways };
+}
+
+function reachableWalkableCount(map, start) {
+  if (!start || !inBounds(start.x, start.y) || map[start.y][start.x] !== ".") return 0;
+
+  const key = (x, y) => `${x},${y}`;
+  const visited = new Set([key(start.x, start.y)]);
+  const queue = [start];
+
+  while (queue.length) {
+    const current = queue.shift();
+    for (const direction of [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 },
+    ]) {
+      const x = current.x + direction.dx;
+      const y = current.y + direction.dy;
+      const entryKey = key(x, y);
+      if (!inBounds(x, y) || visited.has(entryKey) || map[y][x] !== ".") continue;
+      visited.add(entryKey);
+      queue.push({ x, y });
+    }
+  }
+
+  return visited.size;
+}
+
+function floorLayoutIsValid(layout) {
+  if (!layout || layout.rooms.length < 2) return false;
+  if (layout.rooms.some((room) => room.doorways.length === 0)) return false;
+  if (layout.corridors.some((corridor) => corridor.tiles.length === 0)) return false;
+
+  const walkableCount = layout.map.flat().filter((tile) => tile === ".").length;
+  const startRoom = layout.rooms[0];
+  const reachableCount = reachableWalkableCount(layout.map, { x: startRoom.cx, y: startRoom.cy });
+  return walkableCount === reachableCount;
+}
+
+function buildFloorLayout() {
+  const map = createEmptyMap();
+  const tileKinds = createEmptyTileKinds();
+  const rooms = buildRooms();
+
+  for (const room of rooms) {
+    carveRoom(map, tileKinds, room);
+  }
+
+  const { corridors, doorways } = connectRooms(map, tileKinds, rooms);
+  return { map, tileKinds, rooms, corridors, doorways };
+}
+
+function generateFloor() {
+  let layout = null;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const candidate = buildFloorLayout();
+    if (floorLayoutIsValid(candidate)) {
+      layout = candidate;
+      break;
+    }
+    layout = candidate;
+  }
+
+  state.map = layout.map;
+  state.tileKinds = layout.tileKinds;
+  state.rooms = layout.rooms;
+  state.corridors = layout.corridors;
+  state.doorways = layout.doorways;
   state.action = null;
-  const start = rooms[0];
+  const start = layout.rooms[0];
   state.player.x = start.cx;
   state.player.y = start.cy;
+  state.player.hitTime = 0;
+  state.player.hitDuration = 0;
+  state.player.hitDirection = state.player.direction;
   clearPlayerMotion();
   updateCameraTarget();
 
-  const stairRoom = rooms[rooms.length - 1];
+  const stairRoom = layout.rooms[layout.rooms.length - 1];
   state.stairs = { x: stairRoom.cx, y: stairRoom.cy };
 
-  selectEventRooms(rooms, start, stairRoom);
+  selectEventRooms(layout.rooms, start, stairRoom);
   placeEventObjects();
-  placeEnemies(rooms);
-  placeItems(rooms);
+  placeEnemies(layout.rooms);
+  placeItems(layout.rooms);
   placeEventRewards();
+  computeVisibleTiles();
 }
 
 function isWalkable(x, y) {
-  if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return false;
+  if (!inBounds(x, y)) return false;
   return state.map[y][x] === ".";
 }
 
@@ -1394,6 +1852,7 @@ function applyPlayerAttackHit(action) {
   enemy.hitTime = 180;
   enemy.hitDuration = 180;
   enemy.hitDirection = action.direction;
+  addMonsterBurstEffect(enemy, "hit");
   addImpactEffect(enemy.x, enemy.y);
   addFloatingText(String(action.result.damage), enemy.x, enemy.y, "#fde68a");
   playSound("hit");
@@ -1420,7 +1879,9 @@ function applyEnemyCounter(action) {
   enemy.counterTime = 140;
   enemy.counterDuration = 140;
   enemy.counterDirection = directionBetween(enemy, state.player);
+  addMonsterBurstEffect(enemy, "attack");
   state.player.hp -= action.result.counterDamage;
+  startPlayerDamage(directionBetween(enemy, state.player));
   addFloatingText(String(action.result.counterDamage), state.player.x, state.player.y, "#fb7185");
   playSound("damage");
   startCameraShake();
@@ -1465,7 +1926,12 @@ function moveEnemies(options = {}) {
 
     if (state.player.x === nx && state.player.y === ny) {
       const enemyDmg = Math.max(1, e.atk - state.player.def + rng(0, 1));
+      e.counterTime = 140;
+      e.counterDuration = 140;
+      e.counterDirection = directionBetween(e, state.player);
+      addMonsterBurstEffect(e, "attack");
       state.player.hp -= enemyDmg;
+      startPlayerDamage(directionBetween(e, state.player));
       addFloatingText(String(enemyDmg), state.player.x, state.player.y, "#fb7185");
       playSound("damage");
       startCameraShake();
@@ -1491,6 +1957,7 @@ function tickTurn(options = {}) {
   const starved = state.player.hunger === 0;
   if (starved) {
     state.player.hp = Math.max(0, state.player.hp - 1);
+    startPlayerDamage();
     addLog("満腹度が0！ 空腹ダメージ。");
     playSound("damage");
     handlePlayerDefeat(defeatReasons.hunger);
@@ -1629,6 +2096,9 @@ function resetPlayerRunState() {
   state.player.direction = "down";
   state.player.inventory = [];
   state.player.weapon = null;
+  state.player.hitTime = 0;
+  state.player.hitDuration = 0;
+  state.player.hitDirection = "down";
   nextItemId = 1;
   nextEventId = 1;
   inventoryRenderKey = "";
@@ -1667,63 +2137,76 @@ function tryMove(dx, dy) {
 }
 
 
-function drawMonsterShape(enemy, px, py, draw = ENEMY_DRAW.fallback) {
+function drawBlobMonsterShape(px, py, draw, shape) {
   const centerX = px + draw.w / 2;
   const footY = py + draw.h;
 
-  if (enemy.sprite === "slime") {
-    ctx.fillStyle = "#2dd4bf";
-    ctx.beginPath();
-    ctx.ellipse(centerX, footY - 10, draw.w / 2, draw.h / 3, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(20,184,166,0.65)";
-    ctx.beginPath();
-    ctx.ellipse(centerX, footY - 7, draw.w / 2.6, draw.h / 5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#0f172a";
-    ctx.beginPath();
-    ctx.arc(centerX - 7, footY - 13, 3.5, 0, Math.PI * 2);
-    ctx.arc(centerX + 7, footY - 13, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#0f172a";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(centerX, footY - 8, 7, 0.15 * Math.PI, 0.85 * Math.PI);
-    ctx.stroke();
-    return;
-  }
+  ctx.fillStyle = shape.fill;
+  ctx.beginPath();
+  ctx.ellipse(centerX, footY - 10, draw.w / 2, draw.h / 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = shape.shade;
+  ctx.beginPath();
+  ctx.ellipse(centerX, footY - 7, draw.w / 2.6, draw.h / 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = shape.eye;
+  ctx.beginPath();
+  ctx.arc(centerX - 7, footY - 13, 3.5, 0, Math.PI * 2);
+  ctx.arc(centerX + 7, footY - 13, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = shape.eye;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(centerX, footY - 8, 7, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.stroke();
+}
 
-  if (enemy.sprite === "bat") {
-    ctx.fillStyle = "#8b5cf6";
-    ctx.beginPath();
-    ctx.moveTo(px + 3, py + draw.h * 0.55);
-    ctx.lineTo(centerX - 6, py + 8);
-    ctx.lineTo(centerX + 4, py + draw.h * 0.5);
-    ctx.lineTo(px + draw.w - 4, py + 8);
-    ctx.lineTo(px + draw.w - 2, py + draw.h * 0.72);
-    ctx.lineTo(centerX + 5, py + draw.h - 5);
-    ctx.lineTo(centerX - 6, py + draw.h * 0.72);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = "#111827";
-    ctx.beginPath();
-    ctx.arc(centerX - 5, py + draw.h * 0.62, 2.5, 0, Math.PI * 2);
-    ctx.arc(centerX + 5, py + draw.h * 0.62, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-    return;
-  }
+function drawWingedMonsterShape(px, py, draw, shape) {
+  const centerX = px + draw.w / 2;
 
-  ctx.fillStyle = "#f59e0b";
+  ctx.fillStyle = shape.fill;
+  ctx.beginPath();
+  ctx.moveTo(px + 3, py + draw.h * 0.55);
+  ctx.lineTo(centerX - 6, py + 8);
+  ctx.lineTo(centerX + 4, py + draw.h * 0.5);
+  ctx.lineTo(px + draw.w - 4, py + 8);
+  ctx.lineTo(px + draw.w - 2, py + draw.h * 0.72);
+  ctx.lineTo(centerX + 5, py + draw.h - 5);
+  ctx.lineTo(centerX - 6, py + draw.h * 0.72);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = shape.eye;
+  ctx.beginPath();
+  ctx.arc(centerX - 5, py + draw.h * 0.62, 2.5, 0, Math.PI * 2);
+  ctx.arc(centerX + 5, py + draw.h * 0.62, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawBlockMonsterShape(px, py, draw, shape) {
+  const centerX = px + draw.w / 2;
+
+  ctx.fillStyle = shape.fill;
   ctx.beginPath();
   drawRoundRectPath(px + 5, py + 5, draw.w - 10, draw.h - 8, 8);
   ctx.fill();
-  ctx.fillStyle = "rgba(180,83,9,0.65)";
+  ctx.fillStyle = shape.shade;
   ctx.fillRect(px + 8, py + draw.h - 17, draw.w - 16, 8);
-  ctx.fillStyle = "#111827";
+  ctx.fillStyle = shape.eye;
   ctx.beginPath();
   drawRoundRectPath(centerX - 11, py + 21, 7, 7, 3);
   drawRoundRectPath(centerX + 4, py + 21, 7, 7, 3);
   ctx.fill();
+}
+
+function drawMonsterShape(enemy, px, py, draw = DEFAULT_MONSTER_DRAW) {
+  const shape = monsterDefinitionByKey(enemy.sprite).fallbackShape;
+  const shapeRenderers = {
+    blob: drawBlobMonsterShape,
+    winged: drawWingedMonsterShape,
+    block: drawBlockMonsterShape,
+  };
+  const renderer = shapeRenderers[shape.kind] || drawBlockMonsterShape;
+  renderer(px, py, draw, shape);
 }
 
 function drawRoundRectPath(x, y, w, h, r) {
@@ -1739,38 +2222,71 @@ function drawRoundRectPath(x, y, w, h, r) {
   ctx.quadraticCurveTo(x, y, x + radius, y);
 }
 
-function enemyIdleFrame(enemy, idle) {
+function enemyMotionPhase(enemy, motion) {
   const spriteOffset = enemy.sprite.length * 29;
   const positionOffset = enemy.x * 41 + enemy.y * 53;
-  const phase = Math.floor((runtime.elapsed + spriteOffset + positionOffset) / idle.cycle) % 2;
-  return phase === 0 ? 0 : 1;
+  const cycle = Math.max(1, motion.cycle || 760);
+  return ((runtime.elapsed + spriteOffset + positionOffset) % cycle) / cycle;
 }
 
-function drawEnemyShadow(position, draw, idle, frame) {
+function enemyMotionTuning(enemy, motion) {
+  const phase = enemyMotionPhase(enemy, motion);
+  const wave = Math.sin(phase * Math.PI * 2);
+  const pulse = (wave + 1) / 2;
+  const flap = Math.abs(wave);
+  const tuning = {
+    bob: -(motion.floatOffset || 0) - motion.bob * pulse,
+    scaleX: 1 + (motion.scaleX - 1) * pulse + flap * (motion.flapScaleX || 0),
+    scaleY: 1 + (motion.scaleY - 1) * pulse + flap * (motion.flapScaleY || 0),
+    rotation: wave * (motion.wobble || 0),
+    shadowScale: (motion.shadowBase || 1) + pulse * (motion.shadowPulse || 0),
+    alpha: 1,
+  };
+
+  if (enemy.hitTime > 0) {
+    const progress = enemy.hitTime / Math.max(1, enemy.hitDuration || 1);
+    tuning.alpha = Math.floor(enemy.hitTime / 45) % 2 === 0 ? 0.55 : 1;
+    tuning.scaleX *= 1 + ((motion.hitScaleX || 1.08) - 1) * progress;
+    tuning.scaleY *= 1 + ((motion.hitScaleY || 0.92) - 1) * progress;
+    tuning.rotation += Math.sin(progress * Math.PI * 8) * (motion.hitRotation || 0.09);
+  }
+
+  if (enemy.counterTime > 0) {
+    const progress = enemy.counterTime / Math.max(1, enemy.counterDuration || 1);
+    const strike = Math.sin(progress * Math.PI);
+    tuning.scaleX *= 1 + ((motion.attackScaleX || 1.04) - 1) * strike;
+    tuning.scaleY *= 1 + ((motion.attackScaleY || 1.02) - 1) * strike;
+    tuning.rotation += (motion.attackRotation || 0.07) * strike;
+    tuning.shadowScale += strike * (motion.attackShadowPulse || 0.06);
+  }
+
+  return tuning;
+}
+
+function drawEnemyShadow(position, draw, motion, tuning) {
   const footX = position.x + draw.w / 2;
-  const footY = position.y + draw.h + (idle.shadowOffsetY || 0);
-  const pulse = frame ? 0.92 : 1;
+  const footY = position.y + draw.h + (motion.shadowOffsetY || 0);
+  const scale = tuning.shadowScale || 1;
 
   ctx.save();
   ctx.fillStyle = "rgba(3, 7, 18, 0.34)";
   ctx.beginPath();
-  ctx.ellipse(footX, footY - 2, idle.shadowX * pulse, idle.shadowY * pulse, 0, 0, Math.PI * 2);
+  ctx.ellipse(footX, footY - 2, motion.shadowX * scale, motion.shadowY * scale, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
 
-function drawEnemySpriteWithIdle(enemy, sprite, position, draw, idle) {
-  const frame = enemyIdleFrame(enemy, idle);
-  const bob = frame ? -idle.bob : 0;
-  const scaleX = frame ? idle.scaleX : 1;
-  const scaleY = frame ? idle.scaleY : 1;
-  const anchorY = draw.h * idle.anchor;
+function drawEnemySpriteWithIdle(enemy, sprite, position, draw, motion) {
+  const tuning = enemyMotionTuning(enemy, motion);
+  const anchorY = draw.h * motion.anchor;
 
-  drawEnemyShadow(position, draw, idle, frame);
+  drawEnemyShadow(position, draw, motion, tuning);
 
   ctx.save();
-  ctx.translate(position.x + draw.w / 2, position.y + anchorY + bob);
-  ctx.scale(scaleX, scaleY);
+  ctx.globalAlpha = tuning.alpha;
+  ctx.translate(position.x + draw.w / 2, position.y + anchorY + tuning.bob);
+  ctx.rotate(tuning.rotation);
+  ctx.scale(tuning.scaleX, tuning.scaleY);
   const didDraw = drawSprite(sprite, -draw.w / 2, -anchorY, draw.w, draw.h);
   if (!didDraw) {
     drawMonsterShape(enemy, -draw.w / 2, -anchorY, draw);
@@ -1817,8 +2333,10 @@ function drawSprite(sprite, dx, dy, dw, dh) {
 function updateAnimations(delta) {
   runtime.elapsed += delta;
   updatePlayerMotion(delta);
+  updatePlayerReaction(delta);
   updateAction(delta);
   updateEnemyReactions(delta);
+  computeVisibleTiles();
   updateCameraTarget();
   updateEffects(delta);
   updateGameOver(delta);
@@ -1877,6 +2395,105 @@ function drawFallbackTile(tile, sx, sy) {
   ctx.fillRect(sx, sy, TILE - 1, TILE - 1);
 }
 
+function drawRoomFloorDetail(sx, sy, x, y) {
+  ctx.save();
+  ctx.fillStyle = "rgba(216, 180, 104, 0.055)";
+  ctx.fillRect(sx + 2, sy + 2, TILE - 4, TILE - 4);
+
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.12)";
+  ctx.lineWidth = 1;
+  if (tileVariant(x, y, 4) === 0) {
+    ctx.beginPath();
+    ctx.moveTo(sx + 7, sy + 18);
+    ctx.lineTo(sx + 22, sy + 18);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawCorridorFloorDetail(sx, sy, x, y) {
+  const hasHorizontal = isWalkable(x - 1, y) || isWalkable(x + 1, y);
+  const hasVertical = isWalkable(x, y - 1) || isWalkable(x, y + 1);
+
+  ctx.save();
+  ctx.fillStyle = "rgba(2, 6, 23, 0.24)";
+  ctx.fillRect(sx + 1, sy + 1, TILE - 2, TILE - 2);
+
+  ctx.fillStyle = "rgba(20, 184, 166, 0.08)";
+  if (hasHorizontal && !hasVertical) {
+    ctx.fillRect(sx + 3, sy + 13, TILE - 6, 6);
+  } else if (hasVertical && !hasHorizontal) {
+    ctx.fillRect(sx + 13, sy + 3, 6, TILE - 6);
+  } else {
+    ctx.fillRect(sx + 12, sy + 12, 8, 8);
+    if (hasHorizontal) ctx.fillRect(sx + 3, sy + 14, TILE - 6, 4);
+    if (hasVertical) ctx.fillRect(sx + 14, sy + 3, 4, TILE - 6);
+  }
+
+  ctx.strokeStyle = "rgba(3, 7, 18, 0.45)";
+  ctx.strokeRect(sx + 2.5, sy + 2.5, TILE - 5, TILE - 5);
+  ctx.restore();
+}
+
+function drawDoorwayDetail(sx, sy, x, y) {
+  const hasHorizontalCorridor = tileKindAt(x - 1, y) === "corridor" || tileKindAt(x + 1, y) === "corridor";
+
+  ctx.save();
+  ctx.fillStyle = "rgba(214, 177, 95, 0.16)";
+  ctx.fillRect(sx + 3, sy + 3, TILE - 6, TILE - 6);
+  ctx.strokeStyle = "rgba(250, 204, 21, 0.36)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (hasHorizontalCorridor) {
+    ctx.moveTo(sx + TILE / 2, sy + 5);
+    ctx.lineTo(sx + TILE / 2, sy + TILE - 5);
+  } else {
+    ctx.moveTo(sx + 5, sy + TILE / 2);
+    ctx.lineTo(sx + TILE - 5, sy + TILE / 2);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawWallEdgeDetail(sx, sy, x, y) {
+  if (state.map[y][x] !== "#") return;
+  const touchesFloor = isWalkable(x + 1, y) || isWalkable(x - 1, y) || isWalkable(x, y + 1) || isWalkable(x, y - 1);
+  if (!touchesFloor) return;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(3, 7, 18, 0.34)";
+  if (isWalkable(x, y + 1)) ctx.fillRect(sx, sy + TILE - 5, TILE, 5);
+  if (isWalkable(x, y - 1)) ctx.fillRect(sx, sy, TILE, 4);
+  if (isWalkable(x + 1, y)) ctx.fillRect(sx + TILE - 4, sy, 4, TILE);
+  if (isWalkable(x - 1, y)) ctx.fillRect(sx, sy, 4, TILE);
+
+  ctx.strokeStyle = "rgba(214, 177, 95, 0.14)";
+  ctx.lineWidth = 1;
+  if (isWalkable(x, y + 1)) {
+    ctx.beginPath();
+    ctx.moveTo(sx + 2, sy + TILE - 6);
+    ctx.lineTo(sx + TILE - 2, sy + TILE - 6);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawTileStructureDetail(tile, x, y, sx, sy) {
+  if (tile === "#") {
+    drawWallEdgeDetail(sx, sy, x, y);
+    return;
+  }
+
+  const kind = tileKindAt(x, y);
+  if (kind === "room") {
+    drawRoomFloorDetail(sx, sy, x, y);
+  } else if (kind === "corridor") {
+    drawCorridorFloorDetail(sx, sy, x, y);
+  } else if (kind === "doorway") {
+    drawDoorwayDetail(sx, sy, x, y);
+  }
+}
+
 function drawTileSprite(tile, x, y) {
   const group = tile === "#" ? sprites.tiles.wall : sprites.tiles.floor;
   const sprite = group[tileVariant(x, y, group.length)];
@@ -1886,6 +2503,7 @@ function drawTileSprite(tile, x, y) {
   if (!didDraw) {
     drawFallbackTile(tile, sx, sy);
   }
+  drawTileStructureDetail(tile, x, y, sx, sy);
 }
 
 function drawMapLayer() {
@@ -1902,6 +2520,23 @@ function drawMapLayer() {
   }
 }
 
+function drawVisibilityLayer() {
+  const startX = clamp(Math.floor(camera.x / TILE) - 1, 0, COLS - 1);
+  const endX = clamp(Math.ceil((camera.x + canvas.width) / TILE) + 1, 0, COLS);
+  const startY = clamp(Math.floor(camera.y / TILE) - 1, 0, ROWS - 1);
+  const endY = clamp(Math.ceil((camera.y + canvas.height) / TILE) + 1, 0, ROWS);
+
+  ctx.save();
+  ctx.fillStyle = "rgba(3, 7, 18, 0.86)";
+  for (let y = startY; y < endY; y++) {
+    for (let x = startX; x < endX; x++) {
+      if (isVisibleTile(x, y)) continue;
+      ctx.fillRect(gridToScreenX(x), gridToScreenY(y), TILE, TILE);
+    }
+  }
+  ctx.restore();
+}
+
 function eventRoomColor(type) {
   const definition = eventRoomType(type);
   return definition && definition.roomColor ? definition.roomColor : "rgba(255, 255, 255, 0.08)";
@@ -1914,6 +2549,7 @@ function drawEventRoomLayer() {
     for (let y = eventRoom.room.y; y < eventRoom.room.y + eventRoom.room.h; y++) {
       for (let x = eventRoom.room.x; x < eventRoom.room.x + eventRoom.room.w; x++) {
         if (!isWalkable(x, y)) continue;
+        if (!isVisibleTile(x, y)) continue;
         ctx.fillRect(gridToScreenX(x) + 2, gridToScreenY(y) + 2, TILE - 4, TILE - 4);
       }
     }
@@ -1922,6 +2558,8 @@ function drawEventRoomLayer() {
 }
 
 function drawStairsLayer() {
+  if (!isVisibleTile(state.stairs.x, state.stairs.y)) return;
+
   const sx = gridToScreenX(state.stairs.x) + STAIRS_DRAW.offsetX;
   const sy = gridToScreenY(state.stairs.y) + STAIRS_DRAW.offsetY;
 
@@ -1980,6 +2618,7 @@ function drawSpringObject(object) {
 
 function drawEventObjectLayer() {
   for (const object of state.eventObjects) {
+    if (!isVisibleTile(object.x, object.y)) continue;
     const definition = eventObjectType(object.type);
     if (definition && definition.draw) {
       definition.draw(object);
@@ -1989,6 +2628,7 @@ function drawEventObjectLayer() {
 
 function drawItemLayer() {
   for (const item of state.items) {
+    if (!isVisibleTile(item.x, item.y)) continue;
     const itemType = itemTypes[item.type];
     const sx = gridToScreenX(item.x);
     const sy = gridToScreenY(item.y);
@@ -2043,6 +2683,15 @@ function actorDrawPosition(actor, draw) {
   let reactionX = 0;
   let reactionY = 0;
 
+  if (actor === state.player && actor.hitTime > 0) {
+    const progress = actor.hitTime / Math.max(1, actor.hitDuration || 1);
+    const direction = directionToDelta(actor.hitDirection || "down");
+    const shake = Math.sin(progress * Math.PI * 8) * 1.4;
+    reactionX -= direction.dx * PLAYER_MOTION.damageKnockback * progress;
+    reactionY -= direction.dy * PLAYER_MOTION.damageKnockback * progress;
+    reactionX += shake;
+  }
+
   if (actor !== state.player && actor.hitTime > 0) {
     const progress = actor.hitTime / Math.max(1, actor.hitDuration || 1);
     const direction = directionToDelta(actor.hitDirection || "down");
@@ -2064,44 +2713,123 @@ function actorDrawPosition(actor, draw) {
   };
 }
 
+function drawPlayerShadow(position, tuning) {
+  const scale = tuning.shadowScale || 1;
+  ctx.save();
+  ctx.fillStyle = "rgba(3, 7, 18, 0.34)";
+  ctx.beginPath();
+  ctx.ellipse(
+    position.x + PLAYER_DRAW.w / 2,
+    position.y + PLAYER_DRAW.h - 2,
+    15 * scale,
+    5 * scale,
+    0,
+    0,
+    Math.PI * 2
+  );
+  ctx.fill();
+  ctx.restore();
+}
+
+function playerDrawTuning() {
+  const visual = getPlayerVisualGrid();
+  const tuning = {
+    offsetX: 0,
+    offsetY: 0,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+    alpha: 1,
+    shadowScale: 1,
+  };
+
+  if (visual.walking) {
+    const step = Math.sin(visual.progress * Math.PI * 2);
+    tuning.offsetY -= Math.abs(step) * PLAYER_MOTION.walkBob;
+    tuning.rotation = step * 0.035;
+    tuning.shadowScale = 1 - Math.abs(step) * 0.08;
+  } else if (visual.attacking) {
+    const strike = Math.sin(visual.progress * Math.PI);
+    const side = state.player.direction === "left" ? -1 : state.player.direction === "right" ? 1 : 0;
+    tuning.offsetY -= strike * 2;
+    tuning.scaleX = 1 + strike * 0.04;
+    tuning.scaleY = 1 - strike * 0.025;
+    tuning.rotation = side * PLAYER_MOTION.attackTilt * strike;
+    tuning.shadowScale = 1 + strike * 0.05;
+  } else {
+    const breath = Math.sin(runtime.elapsed / PLAYER_MOTION.idleCycle);
+    tuning.offsetY -= (breath + 1) * 0.45;
+    tuning.scaleY = 1 + breath * 0.012;
+    tuning.scaleX = 1 - breath * 0.006;
+  }
+
+  if (state.player.hitTime > 0) {
+    const progress = state.player.hitTime / Math.max(1, state.player.hitDuration || 1);
+    tuning.alpha = Math.floor(state.player.hitTime / 42) % 2 === 0 ? 0.58 : 1;
+    tuning.rotation += Math.sin(progress * Math.PI * 6) * 0.06;
+    tuning.scaleX *= 1 + progress * 0.025;
+    tuning.scaleY *= 1 - progress * 0.018;
+  }
+
+  return tuning;
+}
+
+function drawPlayerSpriteWithTuning(sprite, position, tuning) {
+  drawPlayerShadow(position, tuning);
+
+  ctx.save();
+  ctx.globalAlpha = tuning.alpha;
+  ctx.translate(position.x + PLAYER_DRAW.w / 2 + tuning.offsetX, position.y + PLAYER_DRAW.h + tuning.offsetY);
+  ctx.rotate(tuning.rotation);
+  ctx.scale(tuning.scaleX, tuning.scaleY);
+  const didDraw = drawSprite(sprite, -PLAYER_DRAW.w / 2, -PLAYER_DRAW.h, PLAYER_DRAW.w, PLAYER_DRAW.h);
+  if (!didDraw) {
+    drawPlayerShape(-PLAYER_DRAW.w / 2, -PLAYER_DRAW.h);
+  }
+  ctx.restore();
+
+  return didDraw;
+}
+
 function drawEnemyActor(enemy) {
-  const draw = ENEMY_DRAW[enemy.sprite] || ENEMY_DRAW.fallback;
-  const idle = ENEMY_IDLE[enemy.sprite] || ENEMY_IDLE.fallback;
+  const monster = monsterDefinitionByKey(enemy.sprite);
+  const draw = monster.draw;
+  const motion = monster.motion;
   const position = actorDrawPosition(enemy, draw);
   const sprite = sprites.monsters[enemy.sprite];
   ctx.save();
-  if (enemy.hitTime > 0 && Math.floor(enemy.hitTime / 45) % 2 === 0) {
-    ctx.globalAlpha = 0.55;
-  }
-  drawEnemySpriteWithIdle(enemy, sprite, position, draw, idle);
+  drawEnemySpriteWithIdle(enemy, sprite, position, draw, motion);
   ctx.restore();
 }
 
 function drawPlayerActor() {
   const sprite = getPlayerSprite();
   const position = actorDrawPosition(state.player, PLAYER_DRAW);
+  const tuning = playerDrawTuning();
   let didDraw = false;
 
   if (state.gameOver.active) {
     const progress = clamp(state.gameOver.age / 520, 0, 1);
+    drawPlayerShadow(position, { shadowScale: Math.max(0.45, 1 - progress * 0.4) });
     ctx.save();
     ctx.globalAlpha = 1 - progress * 0.22;
     ctx.translate(position.x + PLAYER_DRAW.w / 2, position.y + PLAYER_DRAW.h - 10 + progress * 8);
     ctx.rotate(-0.65 * progress);
     didDraw = drawSprite(sprite, -PLAYER_DRAW.w / 2, -PLAYER_DRAW.h + 10, PLAYER_DRAW.w, PLAYER_DRAW.h);
+    if (!didDraw) {
+      drawPlayerShape(-PLAYER_DRAW.w / 2, -PLAYER_DRAW.h + 10);
+    }
     ctx.restore();
   } else {
-    didDraw = drawSprite(sprite, position.x, position.y, PLAYER_DRAW.w, PLAYER_DRAW.h);
-  }
-
-  if (!didDraw) {
-    drawPlayerShape(position.x, position.y);
+    didDraw = drawPlayerSpriteWithTuning(sprite, position, tuning);
   }
 }
 
 function drawActorLayer() {
   const actors = [
-    ...state.enemies.filter((e) => e.hp > 0).map((enemy) => ({ type: "enemy", actor: enemy })),
+    ...state.enemies
+      .filter((e) => e.hp > 0 && isVisibleTile(e.x, e.y))
+      .map((enemy) => ({ type: "enemy", actor: enemy })),
     { type: "player", actor: state.player },
   ];
 
@@ -2119,6 +2847,7 @@ function drawActorLayer() {
 function drawEnemyLayer() {
   for (const e of state.enemies) {
     if (e.hp <= 0) continue;
+    if (!isVisibleTile(e.x, e.y)) continue;
     drawEnemyActor(e);
   }
 }
@@ -2196,6 +2925,57 @@ function drawDefeatEffect(effect) {
   ctx.restore();
 }
 
+function drawMonsterBurstEffect(effect) {
+  const progress = effect.age / effect.duration;
+  const alpha = Math.max(0, 1 - progress);
+  const center = effectScreenCenter(effect);
+  const isAttack = effect.variant === "attack";
+  const burst = monsterDefinitionByKey(effect.sprite).burst;
+  const spread = isAttack ? burst.attackSpread : burst.hitSpread;
+  const color = isAttack ? burst.attackColor : burst.hitColor;
+  const count = Math.max(1, burst.count || DEFAULT_MONSTER_BURST.count);
+  const size = burst.size || DEFAULT_MONSTER_BURST.size;
+
+  ctx.save();
+  ctx.globalAlpha = alpha * (isAttack ? 0.75 : 0.9);
+
+  if (burst.kind === "particles") {
+    ctx.fillStyle = color;
+    for (let i = 0; i < count; i++) {
+      const angle = Math.PI * 0.4 + i * (Math.PI / Math.max(2, count));
+      const distance = 5 + progress * spread;
+      ctx.beginPath();
+      ctx.arc(center.x + Math.cos(angle) * distance, center.y + Math.sin(angle) * distance, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (burst.kind === "arcs") {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    for (let i = 0; i < count; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const lift = Math.floor(i / 2) * 4;
+      ctx.beginPath();
+      ctx.moveTo(center.x, center.y - 5 - lift);
+      ctx.quadraticCurveTo(
+        center.x + side * (10 + progress * spread),
+        center.y - 12 - lift + progress * 8,
+        center.x + side * (19 + progress * spread * 0.65),
+        center.y + 3
+      );
+      ctx.stroke();
+    }
+  } else {
+    ctx.fillStyle = color;
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count + 0.3;
+      const distance = 4 + progress * spread;
+      ctx.fillRect(center.x + Math.cos(angle) * distance, center.y + Math.sin(angle) * distance, size, size);
+    }
+  }
+
+  ctx.restore();
+}
+
 function drawEffectsLayer() {
   ctx.save();
   ctx.textAlign = "center";
@@ -2203,6 +2983,8 @@ function drawEffectsLayer() {
   ctx.font = "bold 12px 'Yu Gothic UI', sans-serif";
 
   for (const effect of effects) {
+    if (!isVisibleTile(effect.x, effect.y)) continue;
+
     if (effect.type === "slash") {
       drawSlashEffect(effect);
       continue;
@@ -2215,6 +2997,11 @@ function drawEffectsLayer() {
 
     if (effect.type === "defeat") {
       drawDefeatEffect(effect);
+      continue;
+    }
+
+    if (effect.type === "monsterBurst") {
+      drawMonsterBurstEffect(effect);
       continue;
     }
 
@@ -2401,6 +3188,7 @@ function draw() {
   drawStairsLayer();
   drawEventObjectLayer();
   drawItemLayer();
+  drawVisibilityLayer();
   drawActorLayer();
   drawEffectsLayer();
   ctx.restore();
