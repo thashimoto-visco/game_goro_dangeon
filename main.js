@@ -312,9 +312,6 @@ const eventRoomTypes = {
       playSound("spring");
       startFlash("rgba(45,212,191,0.14)", 140);
     },
-    placeObjects(eventRoom) {
-      placeSpringObject(eventRoom);
-    },
   },
 };
 
@@ -452,6 +449,7 @@ const dungeonTileRendererModule = requireDungeonModule("GORO_DUNGEON_TILE_RENDER
 const dungeonDebugOverlayModule = requireDungeonModule("GORO_DUNGEON_DEBUG_OVERLAY", window.GORO_DUNGEON_DEBUG_OVERLAY, [
   "createRenderer",
 ]);
+const dungeonEventsModule = requireDungeonModule("GORO_DUNGEON_EVENTS", window.GORO_DUNGEON_EVENTS, ["createSystem"]);
 
 const dungeonLayoutBuilder = dungeonLayoutModule.createBuilder({
   cols: COLS,
@@ -462,6 +460,12 @@ const dungeonLayoutBuilder = dungeonLayoutModule.createBuilder({
 const dungeonVisibility = dungeonVisibilityModule.createComputer({
   cols: COLS,
   rows: ROWS,
+});
+const dungeonEvents = dungeonEventsModule.createSystem({
+  rng,
+  weightedPick,
+  isSameRoom,
+  roomsOverlap,
 });
 
 function levelEntry(level) {
@@ -1178,27 +1182,16 @@ function treasureRewardTableForCurrentFloor() {
 }
 
 function selectEventRooms(rooms, startRoom, stairRoom) {
-  state.eventRooms = [];
   state.eventObjects = [];
-
-  const table = eventTableForCurrentFloor();
-  if (rng(1, 100) > table.chance) return;
-
-  const candidates = rooms.filter((room) => {
-    if (isSameRoom(room, startRoom) || isSameRoom(room, stairRoom)) return false;
-    if (roomsOverlap(room, startRoom) || roomsOverlap(room, stairRoom)) return false;
-    return room.w >= 6 && room.h >= 5;
+  const result = dungeonEvents.selectRooms({
+    rooms,
+    startRoom,
+    stairRoom,
+    table: eventTableForCurrentFloor(),
+    nextId: nextEventId,
   });
-  if (candidates.length === 0) return;
-
-  const room = candidates[rng(0, candidates.length - 1)];
-  state.eventRooms.push({
-    id: nextEventId,
-    type: weightedPick(table.entries),
-    room,
-    discovered: false,
-  });
-  nextEventId += 1;
+  state.eventRooms = result.eventRooms;
+  nextEventId = result.nextId;
 }
 
 function eventObjectPlacementBlocked(x, y) {
@@ -1208,35 +1201,14 @@ function eventObjectPlacementBlocked(x, y) {
   return Boolean(eventObjectAt(x, y));
 }
 
-function placeSpringObject(eventRoom) {
-  const positions = [
-    { x: eventRoom.room.cx, y: eventRoom.room.cy },
-    { x: eventRoom.room.cx - 1, y: eventRoom.room.cy },
-    { x: eventRoom.room.cx + 1, y: eventRoom.room.cy },
-    { x: eventRoom.room.cx, y: eventRoom.room.cy - 1 },
-    { x: eventRoom.room.cx, y: eventRoom.room.cy + 1 },
-  ];
-
-  const position = positions.find((entry) => !eventObjectPlacementBlocked(entry.x, entry.y));
-  if (!position) return;
-
-  state.eventObjects.push({
-    id: nextEventId,
-    type: "spring",
-    x: position.x,
-    y: position.y,
-    used: false,
-  });
-  nextEventId += 1;
-}
-
 function placeEventObjects() {
-  for (const eventRoom of state.eventRooms) {
-    const definition = eventRoomType(eventRoom.type);
-    if (definition && definition.placeObjects) {
-      definition.placeObjects(eventRoom);
-    }
-  }
+  const result = dungeonEvents.placeObjects({
+    eventRooms: state.eventRooms,
+    isBlocked: eventObjectPlacementBlocked,
+    nextId: nextEventId,
+  });
+  state.eventObjects = result.eventObjects;
+  nextEventId = result.nextId;
 }
 
 function buildFloorLayout() {
