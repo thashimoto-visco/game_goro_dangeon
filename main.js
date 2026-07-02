@@ -10,52 +10,6 @@ const PLAYER_MOTION = {
   damageDuration: 220,
   damageKnockback: 6,
 };
-const DEFAULT_MONSTER_DRAW = { offsetX: -24, offsetY: -58, w: 48, h: 58 };
-const DEFAULT_MONSTER_MOTION = {
-  cycle: 760,
-  bob: 1,
-  floatOffset: 0,
-  scaleX: 1.02,
-  scaleY: 0.98,
-  flapScaleX: 0,
-  flapScaleY: 0,
-  anchor: 0.92,
-  shadowX: 16,
-  shadowY: 5,
-  shadowOffsetY: 0,
-  shadowBase: 1,
-  shadowPulse: -0.08,
-  wobble: 0.035,
-  hitScaleX: 1.08,
-  hitScaleY: 0.92,
-  hitRotation: 0.09,
-  attackScaleX: 1.04,
-  attackScaleY: 1.02,
-  attackRotation: 0.07,
-  attackShadowPulse: 0.06,
-};
-const DEFAULT_MONSTER_SHAPE = {
-  kind: "block",
-  fill: "#f59e0b",
-  shade: "rgba(180,83,9,0.65)",
-  eye: "#111827",
-};
-const DEFAULT_MONSTER_BURST = {
-  kind: "chunks",
-  hitColor: "#b45309",
-  attackColor: "#fbbf24",
-  count: 6,
-  size: 3,
-  hitSpread: 16,
-  attackSpread: 11,
-};
-const DEFAULT_MONSTER_STATS = {
-  baseHp: 5,
-  baseAtk: 2,
-  hpScale: 1,
-  atkScale: 0.4,
-  exp: 4,
-};
 const STAIRS_DRAW = { offsetX: 8, offsetY: 8, w: 16, h: 16 };
 const ITEM_DRAW = {
   size: 22,
@@ -78,44 +32,12 @@ const appConfig = {
   ...(window.GORO_DUNGEON_CONFIG || {}),
 };
 
-function mergeMonsterProfile(base, override) {
-  return { ...base, ...(override || {}) };
+if (!window.GORO_DUNGEON_MONSTERS || typeof window.GORO_DUNGEON_MONSTERS.createSystem !== "function") {
+  throw new Error("必要なモンスターシステム GORO_DUNGEON_MONSTERS.createSystem を読み込めません。");
 }
-
-function buildMonsterDefinitions(catalog) {
-  const entries = Array.isArray(catalog) ? catalog : [];
-  return Object.fromEntries(
-    entries
-      .filter((entry) => entry && entry.key)
-      .map((entry) => [
-        entry.key,
-        {
-          ...entry,
-          stats: mergeMonsterProfile(DEFAULT_MONSTER_STATS, entry.stats),
-          draw: mergeMonsterProfile(DEFAULT_MONSTER_DRAW, entry.draw),
-          motion: mergeMonsterProfile(DEFAULT_MONSTER_MOTION, entry.motion),
-          fallbackShape: mergeMonsterProfile(DEFAULT_MONSTER_SHAPE, entry.fallbackShape),
-          burst: mergeMonsterProfile(DEFAULT_MONSTER_BURST, entry.burst),
-        },
-      ])
-  );
-}
-
-const monsterDefinitions = buildMonsterDefinitions(window.GORO_DUNGEON_MONSTER_CATALOG);
-const monsterCatalog = Object.values(monsterDefinitions);
-const fallbackMonsterDefinition = {
-  key: "fallback",
-  name: "名もなき魔物",
-  stats: DEFAULT_MONSTER_STATS,
-  draw: DEFAULT_MONSTER_DRAW,
-  motion: DEFAULT_MONSTER_MOTION,
-  fallbackShape: DEFAULT_MONSTER_SHAPE,
-  burst: DEFAULT_MONSTER_BURST,
-};
-
-function monsterDefinitionByKey(key) {
-  return monsterDefinitions[key] || fallbackMonsterDefinition;
-}
+const monsterSystem = window.GORO_DUNGEON_MONSTERS.createSystem(window.GORO_DUNGEON_MONSTER_CATALOG);
+const monsterCatalog = monsterSystem.catalog;
+const monsterTypes = monsterSystem.types;
 
 function resolveAssetUrl(path) {
   if (/^(?:https?:|data:|blob:|file:)/.test(path)) return path;
@@ -252,12 +174,6 @@ const itemTypes = {
   },
 };
 
-const monsterTypes = monsterCatalog.map((monster) => ({
-  key: monster.key,
-  name: monster.name,
-  ...monster.stats,
-}));
-
 const levelTable = [
   { level: 1, nextExp: 8, maxHp: 20, atk: 5, def: 2 },
   { level: 2, nextExp: 20, maxHp: 24, atk: 6, def: 2 },
@@ -280,7 +196,7 @@ function buildEnemySpawnTables(tables) {
     }))
     .filter((table) => table.entries.length > 0);
   if (spawnTables.length > 0) return spawnTables;
-  const fallbackKey = monsterCatalog[0]?.key || fallbackMonsterDefinition.key;
+  const fallbackKey = monsterCatalog[0]?.key || monsterSystem.definitionByKey("fallback").key;
   return [{ minFloor: 1, maxFloor: 99, count: [3, 4], entries: [{ type: fallbackKey, weight: 100 }] }];
 }
 
@@ -626,15 +542,7 @@ function weightedPick(entries) {
 }
 
 function monsterTypeByKey(key) {
-  const fallbackStats = fallbackMonsterDefinition.stats;
-  return (
-    monsterTypes.find((type) => type.key === key) ||
-    monsterTypes[0] || {
-      key: fallbackMonsterDefinition.key,
-      name: fallbackMonsterDefinition.name,
-      ...fallbackStats,
-    }
-  );
+  return monsterSystem.typeByKey(key);
 }
 
 function applyNaturalRecovery() {
@@ -1154,7 +1062,7 @@ function handleMenuInput(key) {
 
 function defeatReasonFromEnemy(enemy) {
   if (!enemy) return defeatReasons.fallbackEnemy;
-  return monsterDefinitionByKey(enemy.sprite).defeatText || `${enemy.name}に倒された`;
+  return monsterSystem.definitionByKey(enemy.sprite).defeatText || `${enemy.name}に倒された`;
 }
 
 function startGameOver(reason) {
@@ -1203,16 +1111,7 @@ function inBounds(x, y) {
 }
 
 function createEnemy(type, x, y) {
-  const floorBonus = Math.max(0, state.floor - 1);
-  return {
-    x,
-    y,
-    hp: Math.round(type.baseHp + floorBonus * type.hpScale),
-    atk: Math.round(type.baseAtk + floorBonus * type.atkScale),
-    exp: type.exp,
-    name: type.name,
-    sprite: type.key,
-  };
+  return monsterSystem.createEnemy(type, x, y, state.floor);
 }
 
 function isSameRoom(a, b) {
@@ -1898,8 +1797,8 @@ function drawBlockMonsterShape(px, py, draw, shape) {
   ctx.fill();
 }
 
-function drawMonsterShape(enemy, px, py, draw = DEFAULT_MONSTER_DRAW) {
-  const shape = monsterDefinitionByKey(enemy.sprite).fallbackShape;
+function drawMonsterShape(enemy, px, py, draw = monsterSystem.defaults.draw) {
+  const shape = monsterSystem.definitionByKey(enemy.sprite).fallbackShape;
   const shapeRenderers = {
     blob: drawBlobMonsterShape,
     winged: drawWingedMonsterShape,
@@ -2388,7 +2287,7 @@ function drawPlayerSpriteWithTuning(sprite, position, tuning) {
 }
 
 function drawEnemyActor(enemy) {
-  const monster = monsterDefinitionByKey(enemy.sprite);
+  const monster = monsterSystem.definitionByKey(enemy.sprite);
   const draw = monster.draw;
   const motion = monster.motion;
   const position = actorDrawPosition(enemy, draw);
@@ -2526,11 +2425,11 @@ function drawMonsterBurstEffect(effect) {
   const alpha = Math.max(0, 1 - progress);
   const center = effectScreenCenter(effect);
   const isAttack = effect.variant === "attack";
-  const burst = monsterDefinitionByKey(effect.sprite).burst;
+  const burst = monsterSystem.definitionByKey(effect.sprite).burst;
   const spread = isAttack ? burst.attackSpread : burst.hitSpread;
   const color = isAttack ? burst.attackColor : burst.hitColor;
-  const count = Math.max(1, burst.count || DEFAULT_MONSTER_BURST.count);
-  const size = burst.size || DEFAULT_MONSTER_BURST.size;
+  const count = Math.max(1, burst.count || monsterSystem.defaults.burst.count);
+  const size = burst.size || monsterSystem.defaults.burst.size;
 
   ctx.save();
   ctx.globalAlpha = alpha * (isAttack ? 0.75 : 0.9);
