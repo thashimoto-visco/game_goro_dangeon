@@ -217,6 +217,10 @@ const runtime = {
   elapsed: 0,
 };
 
+const debug = {
+  structureOverlay: false,
+};
+
 const itemTypes = {
   woodenSword: {
     name: "木の棒",
@@ -529,6 +533,9 @@ const dungeonVisibilityModule = requireDungeonModule("GORO_DUNGEON_VISIBILITY", 
 const dungeonTileRendererModule = requireDungeonModule("GORO_DUNGEON_TILE_RENDERER", window.GORO_DUNGEON_TILE_RENDERER, [
   "createRenderer",
 ]);
+const dungeonDebugOverlayModule = requireDungeonModule("GORO_DUNGEON_DEBUG_OVERLAY", window.GORO_DUNGEON_DEBUG_OVERLAY, [
+  "createRenderer",
+]);
 
 const dungeonLayoutBuilder = dungeonLayoutModule.createBuilder({
   cols: COLS,
@@ -683,6 +690,12 @@ const dungeonTileRenderer = dungeonTileRendererModule.createRenderer({
   gridToScreenX,
   gridToScreenY,
   getFloor: () => state.floor,
+});
+const dungeonDebugOverlay = dungeonDebugOverlayModule.createRenderer({
+  ctx,
+  tileSize: TILE,
+  gridToScreenX,
+  gridToScreenY,
 });
 
 function addLog(text) {
@@ -2108,6 +2121,18 @@ function drawVisibilityLayer() {
   ctx.restore();
 }
 
+function drawDebugStructureOverlay() {
+  if (!debug.structureOverlay) return;
+  dungeonDebugOverlay.draw(
+    {
+      rooms: state.rooms,
+      corridors: state.corridors,
+      doorways: state.doorways,
+    },
+    state.visibleTiles
+  );
+}
+
 function eventRoomColor(type) {
   const definition = eventRoomType(type);
   return definition && definition.roomColor ? definition.roomColor : "rgba(255, 255, 255, 0.08)";
@@ -2762,6 +2787,7 @@ function draw() {
   drawVisibilityLayer();
   drawActorLayer();
   drawEffectsLayer();
+  drawDebugStructureOverlay();
   ctx.restore();
 
   drawMenuLayer();
@@ -2831,9 +2857,16 @@ window.addEventListener("keydown", (event) => {
     key === "arrowup" ||
     key === "arrowdown" ||
     key === "arrowleft" ||
-    key === "arrowright"
+    key === "arrowright" ||
+    key === "f2"
   ) {
     event.preventDefault();
+  }
+
+  if (key === "f2") {
+    debug.structureOverlay = !debug.structureOverlay;
+    addLog(`構造表示: ${debug.structureOverlay ? "ON" : "OFF"}`);
+    return;
   }
 
   if (key === "r" && state.gameOver.active) {
