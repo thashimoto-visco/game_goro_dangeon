@@ -49,6 +49,13 @@ const DEFAULT_MONSTER_BURST = {
   hitSpread: 16,
   attackSpread: 11,
 };
+const DEFAULT_MONSTER_STATS = {
+  baseHp: 5,
+  baseAtk: 2,
+  hpScale: 1,
+  atkScale: 0.4,
+  exp: 4,
+};
 const STAIRS_DRAW = { offsetX: 8, offsetY: 8, w: 16, h: 16 };
 const ITEM_DRAW = {
   size: 22,
@@ -84,7 +91,7 @@ function buildMonsterDefinitions(catalog) {
         entry.key,
         {
           ...entry,
-          stats: { ...(entry.stats || {}) },
+          stats: mergeMonsterProfile(DEFAULT_MONSTER_STATS, entry.stats),
           draw: mergeMonsterProfile(DEFAULT_MONSTER_DRAW, entry.draw),
           motion: mergeMonsterProfile(DEFAULT_MONSTER_MOTION, entry.motion),
           fallbackShape: mergeMonsterProfile(DEFAULT_MONSTER_SHAPE, entry.fallbackShape),
@@ -99,7 +106,7 @@ const monsterCatalog = Object.values(monsterDefinitions);
 const fallbackMonsterDefinition = {
   key: "fallback",
   name: "名もなき魔物",
-  stats: { baseHp: 5, baseAtk: 2, hpScale: 1, atkScale: 0.4, exp: 4 },
+  stats: DEFAULT_MONSTER_STATS,
   draw: DEFAULT_MONSTER_DRAW,
   motion: DEFAULT_MONSTER_MOTION,
   fallbackShape: DEFAULT_MONSTER_SHAPE,
@@ -107,7 +114,7 @@ const fallbackMonsterDefinition = {
 };
 
 function monsterDefinitionByKey(key) {
-  return monsterDefinitions[key] || monsterCatalog[0] || fallbackMonsterDefinition;
+  return monsterDefinitions[key] || fallbackMonsterDefinition;
 }
 
 function resolveAssetUrl(path) {
@@ -507,6 +514,33 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function requireDungeonModule(name, module, methods) {
+  const missingMethod = methods.find((method) => !module || typeof module[method] !== "function");
+  if (missingMethod) {
+    throw new Error(`必要なダンジョンモジュール ${name}.${missingMethod} を読み込めません。script の読み込み順を確認してください。`);
+  }
+  return module;
+}
+
+const dungeonLayoutModule = requireDungeonModule("GORO_DUNGEON_LAYOUT", window.GORO_DUNGEON_LAYOUT, ["createBuilder"]);
+const dungeonVisibilityModule = requireDungeonModule("GORO_DUNGEON_VISIBILITY", window.GORO_DUNGEON_VISIBILITY, [
+  "createComputer",
+]);
+const dungeonTileRendererModule = requireDungeonModule("GORO_DUNGEON_TILE_RENDERER", window.GORO_DUNGEON_TILE_RENDERER, [
+  "createRenderer",
+]);
+
+const dungeonLayoutBuilder = dungeonLayoutModule.createBuilder({
+  cols: COLS,
+  rows: ROWS,
+  rng,
+  clamp,
+});
+const dungeonVisibility = dungeonVisibilityModule.createComputer({
+  cols: COLS,
+  rows: ROWS,
+});
+
 function levelEntry(level) {
   return levelTable.find((entry) => entry.level === level) || levelTable[0];
 }
@@ -638,6 +672,18 @@ function gridToScreenX(x) {
 function gridToScreenY(y) {
   return worldToScreenY(gridToWorldY(y));
 }
+
+const dungeonTileRenderer = dungeonTileRendererModule.createRenderer({
+  ctx,
+  tileSize: TILE,
+  sprites: sprites.tiles,
+  drawSprite,
+  tileKindAt,
+  isWalkable,
+  gridToScreenX,
+  gridToScreenY,
+  getFloor: () => state.floor,
+});
 
 function addLog(text) {
   const li = document.createElement("li");
@@ -1139,25 +1185,8 @@ function updateCameraTarget() {
   camera.y = clamp(playerCenterY - canvas.height / 2, 0, Math.max(0, mapHeight - canvas.height));
 }
 
-function createEmptyMap() {
-  return Array.from({ length: ROWS }, () => Array(COLS).fill("#"));
-}
-
-function createEmptyTileKinds() {
-  return Array.from({ length: ROWS }, () => Array(COLS).fill("wall"));
-}
-
 function inBounds(x, y) {
   return x >= 0 && y >= 0 && x < COLS && y < ROWS;
-}
-
-function carveRoom(map, tileKinds, room) {
-  for (let yy = room.y; yy < room.y + room.h; yy++) {
-    for (let xx = room.x; xx < room.x + room.w; xx++) {
-      map[yy][xx] = ".";
-      tileKinds[yy][xx] = "room";
-    }
-  }
 }
 
 function createEnemy(type, x, y) {
@@ -1182,16 +1211,6 @@ function roomsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-function roomsOverlapWithPadding(a, b, padding = 1) {
-  if (!a || !b) return false;
-  return (
-    a.x - padding < b.x + b.w &&
-    a.x + a.w + padding > b.x &&
-    a.y - padding < b.y + b.h &&
-    a.y + a.h + padding > b.y
-  );
-}
-
 function roomContains(room, x, y) {
   return x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h;
 }
@@ -1200,110 +1219,22 @@ function tileKey(x, y) {
   return `${x},${y}`;
 }
 
-function roomAt(x, y) {
-  return state.rooms.find((room) => roomContains(room, x, y)) || null;
-}
-
 function tileKindAt(x, y) {
   if (!inBounds(x, y) || !state.tileKinds[y]) return "wall";
   return state.tileKinds[y][x] || "wall";
 }
 
-function corridorAt(x, y) {
-  return (
-    state.corridors.find((corridor) =>
-      corridor.tiles.some((tile) => tile.x === x && tile.y === y)
-    ) || null
-  );
-}
-
-function doorwayById(id) {
-  return state.doorways.find((doorway) => doorway.id === id) || null;
-}
-
-function addVisibleTile(visibleTiles, x, y) {
-  if (inBounds(x, y)) {
-    visibleTiles.add(tileKey(x, y));
-  }
-}
-
-function addVisibleTileWithWalls(visibleTiles, x, y) {
-  addVisibleTile(visibleTiles, x, y);
-  for (const direction of [
-    { dx: 1, dy: 0 },
-    { dx: -1, dy: 0 },
-    { dx: 0, dy: 1 },
-    { dx: 0, dy: -1 },
-  ]) {
-    const nx = x + direction.dx;
-    const ny = y + direction.dy;
-    if (inBounds(nx, ny) && state.map[ny][nx] === "#") {
-      addVisibleTile(visibleTiles, nx, ny);
-    }
-  }
-}
-
-function addRoomVisibility(visibleTiles, room) {
-  for (let y = room.y; y < room.y + room.h; y++) {
-    for (let x = room.x; x < room.x + room.w; x++) {
-      addVisibleTileWithWalls(visibleTiles, x, y);
-    }
-  }
-
-  for (const doorwayId of room.doorways) {
-    const doorway = doorwayById(doorwayId);
-    if (!doorway) continue;
-    addVisibleTileWithWalls(visibleTiles, doorway.x, doorway.y);
-    addVisibleTileWithWalls(visibleTiles, doorway.outsideX, doorway.outsideY);
-  }
-}
-
-function corridorTileIndex(corridor, x, y) {
-  return corridor.tiles.findIndex((tile) => tile.x === x && tile.y === y);
-}
-
-function addCorridorVisibility(visibleTiles, corridor, x, y) {
-  const index = corridorTileIndex(corridor, x, y);
-  if (index < 0) return;
-
-  const viewDistance = 4;
-  const start = Math.max(0, index - viewDistance);
-  const end = Math.min(corridor.tiles.length - 1, index + viewDistance);
-  const corridorDoorwayTileKeys = new Set(
-    state.doorways
-      .filter((entry) => entry.corridorId === corridor.id)
-      .map((entry) => tileKey(entry.x, entry.y))
-  );
-
-  for (let i = start; i <= end; i++) {
-    const tile = corridor.tiles[i];
-    if (tileKindAt(tile.x, tile.y) === "doorway" && !corridorDoorwayTileKeys.has(tileKey(tile.x, tile.y))) {
-      continue;
-    }
-    addVisibleTileWithWalls(visibleTiles, tile.x, tile.y);
-  }
-
-  for (const doorway of state.doorways.filter((entry) => entry.corridorId === corridor.id)) {
-    if (Math.abs(doorway.outsideX - x) + Math.abs(doorway.outsideY - y) <= 1) {
-      addVisibleTileWithWalls(visibleTiles, doorway.outsideX, doorway.outsideY);
-    }
-  }
-}
-
 function computeVisibleTiles() {
-  const visibleTiles = new Set();
-  const playerRoom = roomAt(state.player.x, state.player.y);
-  const playerCorridor = corridorAt(state.player.x, state.player.y);
-
-  if (playerRoom) {
-    addRoomVisibility(visibleTiles, playerRoom);
-  } else if (playerCorridor) {
-    addCorridorVisibility(visibleTiles, playerCorridor, state.player.x, state.player.y);
-  } else {
-    addVisibleTileWithWalls(visibleTiles, state.player.x, state.player.y);
-  }
-
-  state.visibleTiles = visibleTiles;
+  state.visibleTiles = dungeonVisibility.compute(
+    {
+      map: state.map,
+      tileKinds: state.tileKinds,
+      rooms: state.rooms,
+      corridors: state.corridors,
+      doorways: state.doorways,
+    },
+    state.player
+  );
 }
 
 function isVisibleTile(x, y) {
@@ -1396,256 +1327,12 @@ function placeEventObjects() {
   }
 }
 
-function createRoom(id) {
-  const w = rng(5, 9);
-  const h = rng(4, 7);
-  const x = rng(2, COLS - w - 3);
-  const y = rng(2, ROWS - h - 3);
-  return { id, x, y, w, h, cx: x + Math.floor(w / 2), cy: y + Math.floor(h / 2), doorways: [] };
-}
-
-function buildRooms() {
-  const rooms = [];
-  const targetCount = rng(6, 7);
-  let attempts = 0;
-
-  while (rooms.length < targetCount && attempts < 260) {
-    attempts += 1;
-    const room = createRoom(rooms.length + 1);
-    if (rooms.some((entry) => roomsOverlapWithPadding(room, entry, 3))) continue;
-    rooms.push(room);
-  }
-
-  if (rooms.length < 2) {
-    return [
-      { id: 1, x: 3, y: 4, w: 8, h: 6, cx: 7, cy: 7, doorways: [] },
-      { id: 2, x: 27, y: 19, w: 8, h: 6, cx: 31, cy: 22, doorways: [] },
-    ];
-  }
-
-  return rooms;
-}
-
-function doorwayForRoomToward(room, target) {
-  const dx = target.cx - room.cx;
-  const dy = target.cy - room.cy;
-
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    const x = dx >= 0 ? room.x + room.w - 1 : room.x;
-    const outsideX = dx >= 0 ? x + 1 : x - 1;
-    const y = clamp(target.cy, room.y + 1, room.y + room.h - 2);
-    return { x, y, outsideX, outsideY: y };
-  }
-
-  const y = dy >= 0 ? room.y + room.h - 1 : room.y;
-  const outsideY = dy >= 0 ? y + 1 : y - 1;
-  const x = clamp(target.cx, room.x + 1, room.x + room.w - 2);
-  return { x, y, outsideX: x, outsideY };
-}
-
-function shuffledDirections() {
-  const directions = [
-    { dx: 1, dy: 0 },
-    { dx: -1, dy: 0 },
-    { dx: 0, dy: 1 },
-    { dx: 0, dy: -1 },
-  ];
-
-  for (let i = directions.length - 1; i > 0; i--) {
-    const j = rng(0, i);
-    [directions[i], directions[j]] = [directions[j], directions[i]];
-  }
-
-  return directions;
-}
-
-function touchesRoomTile(x, y, tileKinds) {
-  for (const direction of [
-    { dx: 1, dy: 0 },
-    { dx: -1, dy: 0 },
-    { dx: 0, dy: 1 },
-    { dx: 0, dy: -1 },
-  ]) {
-    const nx = x + direction.dx;
-    const ny = y + direction.dy;
-    if (inBounds(nx, ny) && tileKinds[ny][nx] === "room") return true;
-  }
-
-  return false;
-}
-
-function canUseCorridorTile(x, y, tileKinds, allowedRoomTouchKeys) {
-  if (!inBounds(x, y)) return false;
-  if (tileKinds[y][x] === "room") return false;
-  if (!touchesRoomTile(x, y, tileKinds)) return true;
-  return allowedRoomTouchKeys.has(`${x},${y}`);
-}
-
-function corridorTilesBetween(from, to, tileKinds, allowedRoomTouchKeys) {
-  const queue = [from];
-  const visited = new Set([`${from.x},${from.y}`]);
-  const cameFrom = new Map();
-
-  while (queue.length) {
-    const current = queue.shift();
-    if (current.x === to.x && current.y === to.y) {
-      const path = [current];
-      let key = `${current.x},${current.y}`;
-
-      while (cameFrom.has(key)) {
-        const previous = cameFrom.get(key);
-        path.push(previous);
-        key = `${previous.x},${previous.y}`;
-      }
-
-      return path.reverse();
-    }
-
-    for (const direction of shuffledDirections()) {
-      const next = { x: current.x + direction.dx, y: current.y + direction.dy };
-      const key = `${next.x},${next.y}`;
-      if (visited.has(key)) continue;
-      if (!canUseCorridorTile(next.x, next.y, tileKinds, allowedRoomTouchKeys)) continue;
-
-      visited.add(key);
-      cameFrom.set(key, current);
-      queue.push(next);
-    }
-  }
-
-  return [];
-}
-
-function carveCorridor(map, tileKinds, corridor) {
-  for (const tile of corridor.tiles) {
-    if (!inBounds(tile.x, tile.y)) continue;
-    map[tile.y][tile.x] = ".";
-    if (tileKinds[tile.y][tile.x] === "wall") {
-      tileKinds[tile.y][tile.x] = "corridor";
-    }
-  }
-}
-
-function connectRooms(map, tileKinds, rooms) {
-  const corridors = [];
-  const doorways = [];
-  rooms.sort((a, b) => a.cx - b.cx || a.cy - b.cy);
-
-  for (let index = 1; index < rooms.length; index++) {
-    const fromRoom = rooms[index - 1];
-    const toRoom = rooms[index];
-    const fromDoor = doorwayForRoomToward(fromRoom, toRoom);
-    const toDoor = doorwayForRoomToward(toRoom, fromRoom);
-    const corridorId = corridors.length + 1;
-    const allowedRoomTouchKeys = new Set([
-      `${fromDoor.outsideX},${fromDoor.outsideY}`,
-      `${toDoor.outsideX},${toDoor.outsideY}`,
-    ]);
-    const corridor = {
-      id: corridorId,
-      fromRoomId: fromRoom.id,
-      toRoomId: toRoom.id,
-      tiles: corridorTilesBetween(
-        { x: fromDoor.outsideX, y: fromDoor.outsideY },
-        { x: toDoor.outsideX, y: toDoor.outsideY },
-        tileKinds,
-        allowedRoomTouchKeys
-      ),
-    };
-
-    const fromDoorway = {
-      id: doorways.length + 1,
-      roomId: fromRoom.id,
-      corridorId,
-      x: fromDoor.x,
-      y: fromDoor.y,
-      outsideX: fromDoor.outsideX,
-      outsideY: fromDoor.outsideY,
-    };
-    const toDoorway = {
-      id: doorways.length + 2,
-      roomId: toRoom.id,
-      corridorId,
-      x: toDoor.x,
-      y: toDoor.y,
-      outsideX: toDoor.outsideX,
-      outsideY: toDoor.outsideY,
-    };
-
-    corridors.push(corridor);
-    doorways.push(fromDoorway, toDoorway);
-    fromRoom.doorways.push(fromDoorway.id);
-    toRoom.doorways.push(toDoorway.id);
-
-    carveCorridor(map, tileKinds, corridor);
-    tileKinds[fromDoor.y][fromDoor.x] = "doorway";
-    tileKinds[toDoor.y][toDoor.x] = "doorway";
-  }
-
-  return { corridors, doorways };
-}
-
-function reachableWalkableCount(map, start) {
-  if (!start || !inBounds(start.x, start.y) || map[start.y][start.x] !== ".") return 0;
-
-  const key = (x, y) => `${x},${y}`;
-  const visited = new Set([key(start.x, start.y)]);
-  const queue = [start];
-
-  while (queue.length) {
-    const current = queue.shift();
-    for (const direction of [
-      { dx: 1, dy: 0 },
-      { dx: -1, dy: 0 },
-      { dx: 0, dy: 1 },
-      { dx: 0, dy: -1 },
-    ]) {
-      const x = current.x + direction.dx;
-      const y = current.y + direction.dy;
-      const entryKey = key(x, y);
-      if (!inBounds(x, y) || visited.has(entryKey) || map[y][x] !== ".") continue;
-      visited.add(entryKey);
-      queue.push({ x, y });
-    }
-  }
-
-  return visited.size;
-}
-
-function floorLayoutIsValid(layout) {
-  if (!layout || layout.rooms.length < 2) return false;
-  if (layout.rooms.some((room) => room.doorways.length === 0)) return false;
-  if (layout.corridors.some((corridor) => corridor.tiles.length === 0)) return false;
-
-  const walkableCount = layout.map.flat().filter((tile) => tile === ".").length;
-  const startRoom = layout.rooms[0];
-  const reachableCount = reachableWalkableCount(layout.map, { x: startRoom.cx, y: startRoom.cy });
-  return walkableCount === reachableCount;
-}
-
 function buildFloorLayout() {
-  const map = createEmptyMap();
-  const tileKinds = createEmptyTileKinds();
-  const rooms = buildRooms();
-
-  for (const room of rooms) {
-    carveRoom(map, tileKinds, room);
-  }
-
-  const { corridors, doorways } = connectRooms(map, tileKinds, rooms);
-  return { map, tileKinds, rooms, corridors, doorways };
+  return dungeonLayoutBuilder.buildFloorLayout();
 }
 
 function generateFloor() {
-  let layout = null;
-  for (let attempt = 0; attempt < 12; attempt++) {
-    const candidate = buildFloorLayout();
-    if (floorLayoutIsValid(candidate)) {
-      layout = candidate;
-      break;
-    }
-    layout = candidate;
-  }
+  const layout = buildFloorLayout();
 
   state.map = layout.map;
   state.tileKinds = layout.tileKinds;
@@ -2386,124 +2073,8 @@ function applyCameraShake() {
   ctx.translate(offsetX, offsetY);
 }
 
-function tileVariant(x, y, count) {
-  return Math.abs((x * 31 + y * 17 + state.floor * 13) % count);
-}
-
-function drawFallbackTile(tile, sx, sy) {
-  ctx.fillStyle = tile === "#" ? "#111827" : "#202b44";
-  ctx.fillRect(sx, sy, TILE - 1, TILE - 1);
-}
-
-function drawRoomFloorDetail(sx, sy, x, y) {
-  ctx.save();
-  ctx.fillStyle = "rgba(216, 180, 104, 0.055)";
-  ctx.fillRect(sx + 2, sy + 2, TILE - 4, TILE - 4);
-
-  ctx.strokeStyle = "rgba(148, 163, 184, 0.12)";
-  ctx.lineWidth = 1;
-  if (tileVariant(x, y, 4) === 0) {
-    ctx.beginPath();
-    ctx.moveTo(sx + 7, sy + 18);
-    ctx.lineTo(sx + 22, sy + 18);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawCorridorFloorDetail(sx, sy, x, y) {
-  const hasHorizontal = isWalkable(x - 1, y) || isWalkable(x + 1, y);
-  const hasVertical = isWalkable(x, y - 1) || isWalkable(x, y + 1);
-
-  ctx.save();
-  ctx.fillStyle = "rgba(2, 6, 23, 0.24)";
-  ctx.fillRect(sx + 1, sy + 1, TILE - 2, TILE - 2);
-
-  ctx.fillStyle = "rgba(20, 184, 166, 0.08)";
-  if (hasHorizontal && !hasVertical) {
-    ctx.fillRect(sx + 3, sy + 13, TILE - 6, 6);
-  } else if (hasVertical && !hasHorizontal) {
-    ctx.fillRect(sx + 13, sy + 3, 6, TILE - 6);
-  } else {
-    ctx.fillRect(sx + 12, sy + 12, 8, 8);
-    if (hasHorizontal) ctx.fillRect(sx + 3, sy + 14, TILE - 6, 4);
-    if (hasVertical) ctx.fillRect(sx + 14, sy + 3, 4, TILE - 6);
-  }
-
-  ctx.strokeStyle = "rgba(3, 7, 18, 0.45)";
-  ctx.strokeRect(sx + 2.5, sy + 2.5, TILE - 5, TILE - 5);
-  ctx.restore();
-}
-
-function drawDoorwayDetail(sx, sy, x, y) {
-  const hasHorizontalCorridor = tileKindAt(x - 1, y) === "corridor" || tileKindAt(x + 1, y) === "corridor";
-
-  ctx.save();
-  ctx.fillStyle = "rgba(214, 177, 95, 0.16)";
-  ctx.fillRect(sx + 3, sy + 3, TILE - 6, TILE - 6);
-  ctx.strokeStyle = "rgba(250, 204, 21, 0.36)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  if (hasHorizontalCorridor) {
-    ctx.moveTo(sx + TILE / 2, sy + 5);
-    ctx.lineTo(sx + TILE / 2, sy + TILE - 5);
-  } else {
-    ctx.moveTo(sx + 5, sy + TILE / 2);
-    ctx.lineTo(sx + TILE - 5, sy + TILE / 2);
-  }
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawWallEdgeDetail(sx, sy, x, y) {
-  if (state.map[y][x] !== "#") return;
-  const touchesFloor = isWalkable(x + 1, y) || isWalkable(x - 1, y) || isWalkable(x, y + 1) || isWalkable(x, y - 1);
-  if (!touchesFloor) return;
-
-  ctx.save();
-  ctx.fillStyle = "rgba(3, 7, 18, 0.34)";
-  if (isWalkable(x, y + 1)) ctx.fillRect(sx, sy + TILE - 5, TILE, 5);
-  if (isWalkable(x, y - 1)) ctx.fillRect(sx, sy, TILE, 4);
-  if (isWalkable(x + 1, y)) ctx.fillRect(sx + TILE - 4, sy, 4, TILE);
-  if (isWalkable(x - 1, y)) ctx.fillRect(sx, sy, 4, TILE);
-
-  ctx.strokeStyle = "rgba(214, 177, 95, 0.14)";
-  ctx.lineWidth = 1;
-  if (isWalkable(x, y + 1)) {
-    ctx.beginPath();
-    ctx.moveTo(sx + 2, sy + TILE - 6);
-    ctx.lineTo(sx + TILE - 2, sy + TILE - 6);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawTileStructureDetail(tile, x, y, sx, sy) {
-  if (tile === "#") {
-    drawWallEdgeDetail(sx, sy, x, y);
-    return;
-  }
-
-  const kind = tileKindAt(x, y);
-  if (kind === "room") {
-    drawRoomFloorDetail(sx, sy, x, y);
-  } else if (kind === "corridor") {
-    drawCorridorFloorDetail(sx, sy, x, y);
-  } else if (kind === "doorway") {
-    drawDoorwayDetail(sx, sy, x, y);
-  }
-}
-
 function drawTileSprite(tile, x, y) {
-  const group = tile === "#" ? sprites.tiles.wall : sprites.tiles.floor;
-  const sprite = group[tileVariant(x, y, group.length)];
-  const sx = gridToScreenX(x);
-  const sy = gridToScreenY(y);
-  const didDraw = drawSprite(sprite, sx, sy, TILE, TILE);
-  if (!didDraw) {
-    drawFallbackTile(tile, sx, sy);
-  }
-  drawTileStructureDetail(tile, x, y, sx, sy);
+  dungeonTileRenderer.drawTile(tile, x, y);
 }
 
 function drawMapLayer() {
