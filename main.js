@@ -351,6 +351,19 @@ const overlay = {
   flashColor: "rgba(255,255,255,0)",
 };
 
+const MINIMAP = {
+  scale: 3,
+  margin: 8,
+  padding: 5,
+};
+
+const minimap = {
+  visible: true,
+  canvas: null,
+  ctx: null,
+  renderedKey: "",
+};
+
 const sound = {
   context: null,
   master: null,
@@ -381,6 +394,8 @@ const state = {
   corridors: [],
   doorways: [],
   visibleTiles: new Set(),
+  exploredTiles: new Set(),
+  stairsSeen: false,
   enemies: [],
   items: [],
   eventRooms: [],
@@ -1151,10 +1166,21 @@ function computeVisibleTiles() {
     },
     state.player
   );
+
+  for (const key of state.visibleTiles) {
+    state.exploredTiles.add(key);
+  }
+  if (!state.stairsSeen && state.visibleTiles.has(tileKey(state.stairs.x, state.stairs.y))) {
+    state.stairsSeen = true;
+  }
 }
 
 function isVisibleTile(x, y) {
   return state.visibleTiles.has(tileKey(x, y));
+}
+
+function isExploredTile(x, y) {
+  return state.exploredTiles.has(tileKey(x, y));
 }
 
 function eventRoomAt(x, y) {
@@ -1223,6 +1249,9 @@ function generateFloor() {
   state.rooms = layout.rooms;
   state.corridors = layout.corridors;
   state.doorways = layout.doorways;
+  state.exploredTiles = new Set();
+  state.stairsSeen = false;
+  minimap.renderedKey = "";
   state.action = null;
   const start = layout.rooms[0];
   state.player.x = start.cx;
@@ -1982,13 +2011,84 @@ function drawVisibilityLayer() {
   const endY = clamp(Math.ceil((camera.y + canvas.height) / TILE) + 1, 0, ROWS);
 
   ctx.save();
-  ctx.fillStyle = "rgba(3, 7, 18, 0.86)";
   for (let y = startY; y < endY; y++) {
     for (let x = startX; x < endX; x++) {
       if (isVisibleTile(x, y)) continue;
+      ctx.fillStyle = isExploredTile(x, y)
+        ? "rgba(3, 7, 18, 0.58)"
+        : "rgba(2, 4, 12, 0.94)";
       ctx.fillRect(gridToScreenX(x), gridToScreenY(y), TILE, TILE);
     }
   }
+  ctx.restore();
+}
+
+function minimapTileColor(kind) {
+  if (kind === "room") return "rgba(203, 213, 225, 0.85)";
+  if (kind === "corridor") return "rgba(122, 136, 158, 0.8)";
+  if (kind === "doorway") return "rgba(240, 244, 250, 0.95)";
+  return null;
+}
+
+function updateMinimapCanvas() {
+  const renderKey = `${state.floor}:${state.exploredTiles.size}:${state.stairsSeen}`;
+  if (renderKey === minimap.renderedKey && minimap.canvas) return;
+  minimap.renderedKey = renderKey;
+
+  if (!minimap.canvas) {
+    minimap.canvas = document.createElement("canvas");
+    minimap.canvas.width = COLS * MINIMAP.scale;
+    minimap.canvas.height = ROWS * MINIMAP.scale;
+    minimap.ctx = minimap.canvas.getContext("2d");
+  }
+
+  const mctx = minimap.ctx;
+  mctx.clearRect(0, 0, minimap.canvas.width, minimap.canvas.height);
+
+  for (const entry of state.exploredTiles) {
+    const [x, y] = entry.split(",").map(Number);
+    const color = minimapTileColor(tileKindAt(x, y));
+    if (!color) continue;
+    mctx.fillStyle = color;
+    mctx.fillRect(x * MINIMAP.scale, y * MINIMAP.scale, MINIMAP.scale, MINIMAP.scale);
+  }
+
+  if (state.stairsSeen) {
+    const sx = state.stairs.x * MINIMAP.scale;
+    const sy = state.stairs.y * MINIMAP.scale;
+    mctx.fillStyle = "#38bdf8";
+    mctx.fillRect(sx - 1, sy - 1, MINIMAP.scale + 2, MINIMAP.scale + 2);
+  }
+}
+
+function drawMinimapLayer() {
+  if (!minimap.visible) return;
+  updateMinimapCanvas();
+
+  const w = minimap.canvas.width + MINIMAP.padding * 2;
+  const h = minimap.canvas.height + MINIMAP.padding * 2;
+  const px = canvas.width - w - MINIMAP.margin;
+  const py = MINIMAP.margin;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(2, 6, 23, 0.74)";
+  ctx.beginPath();
+  drawRoundRectPath(px, py, w, h, 6);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.55)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.drawImage(minimap.canvas, px + MINIMAP.padding, py + MINIMAP.padding);
+
+  const pulse = 0.55 + Math.sin(runtime.elapsed / 220) * 0.45;
+  const playerX = px + MINIMAP.padding + (state.player.x + 0.5) * MINIMAP.scale;
+  const playerY = py + MINIMAP.padding + (state.player.y + 0.5) * MINIMAP.scale;
+  ctx.globalAlpha = clamp(pulse, 0.25, 1);
+  ctx.fillStyle = "#facc15";
+  ctx.beginPath();
+  ctx.arc(playerX, playerY, 2.6, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -2025,7 +2125,8 @@ function drawEventRoomLayer() {
 }
 
 function drawStairsLayer() {
-  if (!isVisibleTile(state.stairs.x, state.stairs.y)) return;
+  const stairsVisible = isVisibleTile(state.stairs.x, state.stairs.y);
+  if (!stairsVisible && !state.stairsSeen) return;
 
   const sx = gridToScreenX(state.stairs.x) + STAIRS_DRAW.offsetX;
   const sy = gridToScreenY(state.stairs.y) + STAIRS_DRAW.offsetY;
@@ -2661,6 +2762,7 @@ function draw() {
   drawDebugStructureOverlay();
   ctx.restore();
 
+  drawMinimapLayer();
   drawMenuLayer();
   drawOverlayLayer();
 }
@@ -2737,6 +2839,12 @@ window.addEventListener("keydown", (event) => {
   if (key === "f2") {
     debug.structureOverlay = !debug.structureOverlay;
     addLog(`構造表示: ${debug.structureOverlay ? "ON" : "OFF"}`);
+    return;
+  }
+
+  if (key === "m") {
+    minimap.visible = !minimap.visible;
+    addLog(`ミニマップ: ${minimap.visible ? "ON" : "OFF"}`);
     return;
   }
 
