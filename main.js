@@ -382,12 +382,21 @@ const floorTransition = {
   floorGenerated: false,
 };
 
+const UNEXPLORED_DARKNESS = 0.94;
+const EXPLORED_DARKNESS = 0.58;
+const VISIBILITY_FADE_MS = 140;
+
+const visibilityFade = {
+  levels: [],
+};
+
 const sound = {
   context: null,
   master: null,
   muted: true,
   musicTimer: null,
   musicStep: 0,
+  lastHeartbeat: 0,
 };
 
 const ui = {
@@ -755,9 +764,10 @@ function playSound(name) {
     return;
   }
   if (name === "stairs") {
-    playTone(330, 0.06, "square", 0.08);
-    playTone(494, 0.06, "square", 0.08, 0.06);
-    playTone(659, 0.08, "square", 0.08, 0.12);
+    playTone(659, 0.07, "square", 0.08);
+    playTone(523, 0.07, "square", 0.08, 0.09);
+    playTone(392, 0.08, "square", 0.08, 0.18);
+    playTone(330, 0.14, "triangle", 0.08, 0.28);
     return;
   }
   if (name === "gameOver") {
@@ -785,16 +795,34 @@ function playSound(name) {
   if (name === "encounter") {
     playTone(740, 0.05, "square", 0.1);
     playTone(988, 0.07, "square", 0.09, 0.05);
+    return;
+  }
+  if (name === "moveCorridor") {
+    playTone(102, 0.035, "square", 0.05);
+    return;
+  }
+  if (name === "roomEnter") {
+    playTone(392, 0.05, "triangle", 0.055);
+    playTone(494, 0.07, "triangle", 0.05, 0.06);
+    return;
+  }
+  if (name === "heartbeat") {
+    playTone(72, 0.09, "sine", 0.13);
+    playTone(56, 0.12, "sine", 0.11, 0.13);
   }
 }
 
 function startMusic() {
   if (sound.musicTimer || sound.muted) return;
   const notes = [110, 146.83, 164.81, 196, 164.81, 146.83];
+  const dangerNotes = [98, 110, 130.81, 110, 103.83, 92.5];
   sound.musicTimer = window.setInterval(() => {
     if (sound.muted) return;
-    const note = notes[sound.musicStep % notes.length];
-    playTone(note, 0.16, "triangle", 0.025);
+    const inDanger =
+      state.player.hp > 0 && state.player.maxHp > 0 && state.player.hp / state.player.maxHp <= 0.35;
+    const sequence = inDanger ? dangerNotes : notes;
+    const note = sequence[sound.musicStep % sequence.length];
+    playTone(note, inDanger ? 0.11 : 0.16, "triangle", inDanger ? 0.03 : 0.025);
     sound.musicStep += 1;
   }, 420);
 }
@@ -1252,6 +1280,46 @@ function isExploredTile(x, y) {
   return state.exploredTiles.has(tileKey(x, y));
 }
 
+function resetVisibilityFade() {
+  visibilityFade.levels = Array.from({ length: ROWS }, () => new Array(COLS).fill(1));
+}
+
+function hasVisibleNeighbor(x, y) {
+  return (
+    isVisibleTile(x + 1, y) ||
+    isVisibleTile(x - 1, y) ||
+    isVisibleTile(x, y + 1) ||
+    isVisibleTile(x, y - 1)
+  );
+}
+
+function visibilityDarknessTarget(x, y) {
+  if (isVisibleTile(x, y)) return 0;
+  const softened = hasVisibleNeighbor(x, y);
+  if (isExploredTile(x, y)) {
+    return softened ? EXPLORED_DARKNESS * 0.55 : EXPLORED_DARKNESS;
+  }
+  return softened ? UNEXPLORED_DARKNESS * 0.7 : UNEXPLORED_DARKNESS;
+}
+
+function updateVisibilityFade(delta) {
+  if (!visibilityFade.levels.length) return;
+  const blend = clamp(delta / VISIBILITY_FADE_MS, 0, 1);
+  for (let y = 0; y < ROWS; y++) {
+    const row = visibilityFade.levels[y];
+    for (let x = 0; x < COLS; x++) {
+      const target = visibilityDarknessTarget(x, y);
+      row[x] += (target - row[x]) * blend;
+    }
+  }
+}
+
+function floorDarknessTint() {
+  if (state.floor >= 7) return { r: 26, g: 4, b: 9 };
+  if (state.floor >= 4) return { r: 12, g: 4, b: 24 };
+  return { r: 3, g: 7, b: 18 };
+}
+
 function eventRoomAt(x, y) {
   return state.eventRooms.find((eventRoom) => roomContains(eventRoom.room, x, y));
 }
@@ -1322,8 +1390,10 @@ function generateFloor() {
   state.stairsSeen = false;
   minimap.renderedKey = "";
   dash.active = false;
+  resetVisibilityFade();
   state.action = null;
   const start = layout.rooms[0];
+  start.visited = true;
   state.player.x = start.cx;
   state.player.y = start.cy;
   state.player.hitTime = 0;
@@ -1642,6 +1712,16 @@ function tickTurn(options = {}) {
   }
 }
 
+function handleRoomEntryAtPlayer() {
+  const room = state.rooms.find((entry) => roomContains(entry, state.player.x, state.player.y));
+  if (!room || room.visited) return;
+
+  room.visited = true;
+  if (!eventRoomAt(state.player.x, state.player.y)) {
+    playSound("roomEnter");
+  }
+}
+
 function handleEventRoomDiscoveryAtPlayer() {
   const eventRoom = eventRoomAt(state.player.x, state.player.y);
   if (!eventRoom || eventRoom.discovered) return;
@@ -1791,8 +1871,10 @@ function tryMove(dx, dy, options = {}) {
   startPlayerWalk(state.player.x, state.player.y, nx, ny, options.walkDuration);
   state.player.x = nx;
   state.player.y = ny;
-  playSound("move");
+  const footingKind = tileKindAt(nx, ny);
+  playSound(footingKind === "corridor" || footingKind === "doorway" ? "moveCorridor" : "move");
   pickUpItemAtPlayer();
+  handleRoomEntryAtPlayer();
   handleEventRoomDiscoveryAtPlayer();
   handleEventObjectAtPlayer();
 
@@ -2147,12 +2229,28 @@ function updateAnimations(delta) {
   updateEnemyReactions(delta);
   computeVisibleTiles();
   updateEnemyEncounters();
+  updateVisibilityFade(delta);
+  updateHeartbeat();
   updateCameraTarget();
   updateEffects(delta);
   updateGameOver(delta);
   updateCamera(delta);
   updateOverlay(delta);
   updateFloorTransition(delta);
+}
+
+function updateHeartbeat() {
+  if (sound.muted || state.gameOver.active || state.player.hp <= 0 || state.player.maxHp <= 0) {
+    return;
+  }
+  const ratio = state.player.hp / state.player.maxHp;
+  if (ratio > 0.35) return;
+
+  const interval = ratio <= 0.18 ? 700 : 980;
+  if (runtime.elapsed - (sound.lastHeartbeat || 0) >= interval) {
+    sound.lastHeartbeat = runtime.elapsed;
+    playSound("heartbeat");
+  }
 }
 
 function updateGameOver(delta) {
@@ -2221,16 +2319,41 @@ function drawVisibilityLayer() {
   const startY = clamp(Math.floor(camera.y / TILE) - 1, 0, ROWS - 1);
   const endY = clamp(Math.ceil((camera.y + canvas.height) / TILE) + 1, 0, ROWS);
 
+  const tint = floorDarknessTint();
+
   ctx.save();
   for (let y = startY; y < endY; y++) {
+    const row = visibilityFade.levels[y];
+    if (!row) continue;
     for (let x = startX; x < endX; x++) {
-      if (isVisibleTile(x, y)) continue;
-      ctx.fillStyle = isExploredTile(x, y)
-        ? "rgba(3, 7, 18, 0.58)"
-        : "rgba(2, 4, 12, 0.94)";
+      const level = row[x];
+      if (level < 0.02) continue;
+      ctx.fillStyle = `rgba(${tint.r}, ${tint.g}, ${tint.b}, ${level.toFixed(3)})`;
       ctx.fillRect(gridToScreenX(x), gridToScreenY(y), TILE, TILE);
     }
   }
+  ctx.restore();
+
+  drawPlayerLight();
+}
+
+function drawPlayerLight() {
+  if (state.gameOver.active) return;
+
+  const visual = getPlayerVisualGrid();
+  const cx = worldToScreenX(gridToWorldX(visual.x) + TILE / 2);
+  const cy = worldToScreenY(gridToWorldY(visual.y) + TILE / 2);
+  const flicker = Math.sin(runtime.elapsed / 850) * 2.5;
+  const radius = TILE * 2.6 + flicker;
+
+  const gradient = ctx.createRadialGradient(cx, cy, TILE * 0.4, cx, cy, radius);
+  gradient.addColorStop(0, "rgba(255, 216, 150, 0.085)");
+  gradient.addColorStop(0.55, "rgba(255, 206, 130, 0.04)");
+  gradient.addColorStop(1, "rgba(255, 200, 120, 0)");
+
+  ctx.save();
+  ctx.fillStyle = gradient;
+  ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
   ctx.restore();
 }
 
