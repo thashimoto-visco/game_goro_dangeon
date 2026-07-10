@@ -364,6 +364,14 @@ const minimap = {
   renderedKey: "",
 };
 
+const DASH_WALK_DURATION = 95;
+
+const dash = {
+  active: false,
+  dx: 0,
+  dy: 0,
+};
+
 const sound = {
   context: null,
   master: null,
@@ -817,7 +825,7 @@ function isMenuOpen() {
   return Boolean(state.menu.type);
 }
 
-function startPlayerWalk(fromX, fromY, toX, toY) {
+function startPlayerWalk(fromX, fromY, toX, toY, duration = 160) {
   state.player.motion = {
     type: "walk",
     fromX,
@@ -825,7 +833,7 @@ function startPlayerWalk(fromX, fromY, toX, toY) {
     toX,
     toY,
     age: 0,
-    duration: 160,
+    duration,
   };
 }
 
@@ -1252,6 +1260,7 @@ function generateFloor() {
   state.exploredTiles = new Set();
   state.stairsSeen = false;
   minimap.renderedKey = "";
+  dash.active = false;
   state.action = null;
   const start = layout.rooms[0];
   state.player.x = start.cx;
@@ -1704,7 +1713,7 @@ function resetPlayerRunState() {
   inventoryRenderKey = "";
 }
 
-function tryMove(dx, dy) {
+function tryMove(dx, dy, options = {}) {
   if (!canAcceptInput() || state.player.hp <= 0) return;
   setPlayerDirection(dx, dy);
   const nx = state.player.x + dx;
@@ -1717,7 +1726,7 @@ function tryMove(dx, dy) {
   }
 
   if (!isWalkable(nx, ny)) return;
-  startPlayerWalk(state.player.x, state.player.y, nx, ny);
+  startPlayerWalk(state.player.x, state.player.y, nx, ny, options.walkDuration);
   state.player.x = nx;
   state.player.y = ny;
   playSound("move");
@@ -1734,6 +1743,114 @@ function tryMove(dx, dy) {
   }
 
   tickTurn();
+}
+
+function anyEnemyVisible() {
+  return state.enemies.some((enemy) => enemy.hp > 0 && isVisibleTile(enemy.x, enemy.y));
+}
+
+function discoveredEventRoomCount() {
+  return state.eventRooms.filter((eventRoom) => eventRoom.discovered).length;
+}
+
+function dashExits(x, y, backDx, backDy) {
+  const deltas = [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+  ];
+  return deltas.filter(
+    (delta) =>
+      !(delta.dx === backDx && delta.dy === backDy) && isWalkable(x + delta.dx, y + delta.dy)
+  );
+}
+
+function stopDash(logText) {
+  if (dash.active && logText) {
+    addLog(logText);
+  }
+  dash.active = false;
+}
+
+function shouldStopDashAfterStep(before) {
+  if (state.gameOver.active) return true;
+  if (state.floor !== before.floor) return true;
+  if (state.player.hp < before.hp) return true;
+  if (state.items.length !== before.itemCount) return true;
+  if (state.player.inventory.length !== before.inventoryCount) return true;
+  if (discoveredEventRoomCount() !== before.discoveredCount) return true;
+  if (itemAt(state.player.x, state.player.y)) return true;
+  if (eventObjectAt(state.player.x, state.player.y)) return true;
+
+  const kind = tileKindAt(state.player.x, state.player.y);
+  if (kind === "doorway") return true;
+  return false;
+}
+
+function dashStep() {
+  if (!dash.active) return;
+  if (!canAcceptInput() || state.player.hp <= 0) {
+    stopDash();
+    return;
+  }
+
+  const nx = state.player.x + dash.dx;
+  const ny = state.player.y + dash.dy;
+  if (!isWalkable(nx, ny) || enemyAt(nx, ny)) {
+    stopDash();
+    return;
+  }
+
+  const before = {
+    floor: state.floor,
+    hp: state.player.hp,
+    itemCount: state.items.length,
+    inventoryCount: state.player.inventory.length,
+    discoveredCount: discoveredEventRoomCount(),
+  };
+
+  tryMove(dash.dx, dash.dy, { walkDuration: DASH_WALK_DURATION });
+
+  if (shouldStopDashAfterStep(before)) {
+    stopDash();
+    return;
+  }
+
+  computeVisibleTiles();
+  if (anyEnemyVisible()) {
+    stopDash("敵の気配を感じて立ち止まった。");
+    return;
+  }
+
+  if (tileKindAt(state.player.x, state.player.y) === "corridor") {
+    const exits = dashExits(state.player.x, state.player.y, -dash.dx, -dash.dy);
+    if (exits.length === 0) {
+      stopDash();
+      return;
+    }
+    if (exits.length >= 2) {
+      stopDash("分かれ道で立ち止まった。");
+      return;
+    }
+    dash.dx = exits[0].dx;
+    dash.dy = exits[0].dy;
+  }
+}
+
+function startDash(dx, dy) {
+  if (!canAcceptInput() || state.player.hp <= 0) return;
+  dash.active = true;
+  dash.dx = dx;
+  dash.dy = dy;
+  dashStep();
+}
+
+function updateDash() {
+  if (!dash.active) return;
+  if (canAcceptInput()) {
+    dashStep();
+  }
 }
 
 
@@ -1935,6 +2052,7 @@ function updateAnimations(delta) {
   updatePlayerMotion(delta);
   updatePlayerReaction(delta);
   updateAction(delta);
+  updateDash();
   updateEnemyReactions(delta);
   computeVisibleTiles();
   updateCameraTarget();
@@ -2836,6 +2954,13 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
   }
 
+  if (dash.active) {
+    if (!event.repeat) {
+      stopDash();
+    }
+    return;
+  }
+
   if (key === "f2") {
     debug.structureOverlay = !debug.structureOverlay;
     addLog(`構造表示: ${debug.structureOverlay ? "ON" : "OFF"}`);
@@ -2871,10 +2996,11 @@ window.addEventListener("keydown", (event) => {
     useInventorySlot(Number(key) - 1);
     return;
   }
-  if (key === "arrowup" || key === "w") tryMove(0, -1);
-  if (key === "arrowdown" || key === "s") tryMove(0, 1);
-  if (key === "arrowleft" || key === "a") tryMove(-1, 0);
-  if (key === "arrowright" || key === "d") tryMove(1, 0);
+  const move = event.shiftKey ? startDash : tryMove;
+  if (key === "arrowup" || key === "w") move(0, -1);
+  if (key === "arrowdown" || key === "s") move(0, 1);
+  if (key === "arrowleft" || key === "a") move(-1, 0);
+  if (key === "arrowright" || key === "d") move(1, 0);
   if (key === " " && canAcceptInput()) tickTurn();
 });
 
