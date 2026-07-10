@@ -137,6 +137,7 @@ const sprites = {
 const runtime = {
   lastTime: 0,
   elapsed: 0,
+  hitStop: 0,
 };
 
 const debug = {
@@ -370,6 +371,15 @@ const dash = {
   active: false,
   dx: 0,
   dy: 0,
+};
+
+const floorTransition = {
+  active: false,
+  age: 0,
+  fadeOut: 260,
+  hold: 500,
+  fadeIn: 300,
+  floorGenerated: false,
 };
 
 const sound = {
@@ -770,6 +780,11 @@ function playSound(name) {
   }
   if (name === "fail") {
     playTone(90, 0.08, "sawtooth", 0.06);
+    return;
+  }
+  if (name === "encounter") {
+    playTone(740, 0.05, "square", 0.1);
+    playTone(988, 0.07, "square", 0.09, 0.05);
   }
 }
 
@@ -818,7 +833,13 @@ function setPlayerDirection(dx, dy) {
 }
 
 function canAcceptInput() {
-  return !state.action && !state.player.motion && !state.gameOver.active && !isMenuOpen();
+  return (
+    !state.action &&
+    !state.player.motion &&
+    !state.gameOver.active &&
+    !isMenuOpen() &&
+    !floorTransition.active
+  );
 }
 
 function isMenuOpen() {
@@ -922,6 +943,38 @@ function addFloatingText(text, x, y, color = "#ffffff") {
   });
 }
 
+function addAlertEffect(x, y) {
+  effects.push({
+    type: "alert",
+    x,
+    y,
+    age: 0,
+    duration: 620,
+  });
+}
+
+function updateEnemyEncounters() {
+  if (state.gameOver.active) return;
+
+  let encountered = false;
+  for (const enemy of state.enemies) {
+    if (enemy.hp <= 0) continue;
+    const visible = isVisibleTile(enemy.x, enemy.y);
+    if (visible && !enemy.spotted) {
+      enemy.spotted = true;
+      addAlertEffect(enemy.x, enemy.y);
+      addLog(`${enemy.name}が現れた！`);
+      encountered = true;
+    } else if (!visible && enemy.spotted) {
+      enemy.spotted = false;
+    }
+  }
+
+  if (encountered) {
+    playSound("encounter");
+  }
+}
+
 function addSlashEffect(x, y, direction) {
   effects.push({
     type: "slash",
@@ -965,6 +1018,10 @@ function addMonsterBurstEffect(enemy, variant = "hit") {
   });
 }
 
+function startHitStop(duration) {
+  runtime.hitStop = Math.max(runtime.hitStop, duration);
+}
+
 function startCameraShake(duration = 120, strength = 2) {
   camera.shakeTime = duration;
   camera.shakeDuration = duration;
@@ -991,6 +1048,10 @@ function clearTransientVisuals() {
   camera.shakeDuration = 0;
   overlay.flashTime = 0;
   overlay.flashDuration = 0;
+  runtime.hitStop = 0;
+  floorTransition.active = false;
+  floorTransition.age = 0;
+  floorTransition.floorGenerated = false;
   state.player.hitTime = 0;
   state.player.hitDuration = 0;
 }
@@ -1465,6 +1526,7 @@ function applyPlayerAttackHit(action) {
   addImpactEffect(enemy.x, enemy.y);
   addFloatingText(String(action.result.damage), enemy.x, enemy.y, "#fde68a");
   playSound("hit");
+  startHitStop(action.result.killed ? 130 : 60);
   startCameraShake(90, action.result.killed ? 4 : 2);
   addLog(`${enemy.name}に${action.result.damage}ダメージ。`);
 
@@ -1735,14 +1797,37 @@ function tryMove(dx, dy, options = {}) {
   handleEventObjectAtPlayer();
 
   if (nx === state.stairs.x && ny === state.stairs.y) {
-    state.floor += 1;
-    playSound("stairs");
-    addLog(`${state.floor}Fへ進んだ。`);
-    generateFloor();
+    startFloorTransition();
     return;
   }
 
   tickTurn();
+}
+
+function startFloorTransition() {
+  floorTransition.active = true;
+  floorTransition.age = 0;
+  floorTransition.floorGenerated = false;
+  stopDash();
+}
+
+function updateFloorTransition(delta) {
+  if (!floorTransition.active) return;
+
+  floorTransition.age += delta;
+
+  if (!floorTransition.floorGenerated && floorTransition.age >= floorTransition.fadeOut) {
+    floorTransition.floorGenerated = true;
+    state.floor += 1;
+    playSound("stairs");
+    addLog(`${state.floor}Fへ進んだ。`);
+    generateFloor();
+  }
+
+  const total = floorTransition.fadeOut + floorTransition.hold + floorTransition.fadeIn;
+  if (floorTransition.age >= total) {
+    floorTransition.active = false;
+  }
 }
 
 function anyEnemyVisible() {
@@ -1942,7 +2027,8 @@ function drawRoundRectPath(x, y, w, h, r) {
 function enemyMotionPhase(enemy, motion) {
   const spriteOffset = enemy.sprite.length * 29;
   const positionOffset = enemy.x * 41 + enemy.y * 53;
-  const cycle = Math.max(1, motion.cycle || 760);
+  const alertFactor = enemy.spotted ? 0.6 : 1;
+  const cycle = Math.max(1, (motion.cycle || 760) * alertFactor);
   return ((runtime.elapsed + spriteOffset + positionOffset) % cycle) / cycle;
 }
 
@@ -2048,6 +2134,11 @@ function drawSprite(sprite, dx, dy, dw, dh) {
 }
 
 function updateAnimations(delta) {
+  if (runtime.hitStop > 0) {
+    runtime.hitStop = Math.max(0, runtime.hitStop - delta);
+    return;
+  }
+
   runtime.elapsed += delta;
   updatePlayerMotion(delta);
   updatePlayerReaction(delta);
@@ -2055,11 +2146,13 @@ function updateAnimations(delta) {
   updateDash();
   updateEnemyReactions(delta);
   computeVisibleTiles();
+  updateEnemyEncounters();
   updateCameraTarget();
   updateEffects(delta);
   updateGameOver(delta);
   updateCamera(delta);
   updateOverlay(delta);
+  updateFloorTransition(delta);
 }
 
 function updateGameOver(delta) {
@@ -2373,16 +2466,17 @@ function actorDrawPosition(actor, draw) {
     const progress = actor.hitTime / Math.max(1, actor.hitDuration || 1);
     const direction = directionToDelta(actor.hitDirection || "down");
     const shake = Math.sin(progress * Math.PI * 8) * 1.4;
-    reactionX -= direction.dx * PLAYER_MOTION.damageKnockback * progress;
-    reactionY -= direction.dy * PLAYER_MOTION.damageKnockback * progress;
+    reactionX += direction.dx * PLAYER_MOTION.damageKnockback * progress;
+    reactionY += direction.dy * PLAYER_MOTION.damageKnockback * progress;
     reactionX += shake;
   }
 
   if (actor !== state.player && actor.hitTime > 0) {
     const progress = actor.hitTime / Math.max(1, actor.hitDuration || 1);
     const direction = directionToDelta(actor.hitDirection || "down");
-    reactionX -= direction.dx * 5 * progress;
-    reactionY -= direction.dy * 5 * progress;
+    const knockback = monsterSystem.definitionByKey(actor.sprite).motion.hitKnockback || 5;
+    reactionX += direction.dx * knockback * progress;
+    reactionY += direction.dy * knockback * progress;
   }
 
   if (actor !== state.player && actor.counterTime > 0) {
@@ -2477,6 +2571,23 @@ function drawPlayerSpriteWithTuning(sprite, position, tuning) {
   return didDraw;
 }
 
+function drawEnemyHpBar(enemy, position, draw) {
+  if (!enemy.maxHp || enemy.hp >= enemy.maxHp || enemy.hp <= 0) return;
+
+  const ratio = clamp(enemy.hp / enemy.maxHp, 0, 1);
+  const barWidth = 26;
+  const barHeight = 3.5;
+  const x = position.x + draw.w / 2 - barWidth / 2;
+  const y = position.y - 7;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(3, 7, 18, 0.72)";
+  ctx.fillRect(x - 1, y - 1, barWidth + 2, barHeight + 2);
+  ctx.fillStyle = ratio > 0.5 ? "#4ade80" : ratio > 0.25 ? "#facc15" : "#f87171";
+  ctx.fillRect(x, y, barWidth * ratio, barHeight);
+  ctx.restore();
+}
+
 function drawEnemyActor(enemy) {
   const monster = monsterSystem.definitionByKey(enemy.sprite);
   const draw = monster.draw;
@@ -2486,6 +2597,7 @@ function drawEnemyActor(enemy) {
   ctx.save();
   drawEnemySpriteWithIdle(enemy, sprite, position, draw, motion);
   ctx.restore();
+  drawEnemyHpBar(enemy, position, draw);
 }
 
 function drawPlayerActor() {
@@ -2547,6 +2659,29 @@ function effectScreenCenter(effect) {
     x: worldToScreenX(gridToWorldX(effect.x) + TILE / 2),
     y: worldToScreenY(gridToWorldY(effect.y) + TILE / 2),
   };
+}
+
+function drawAlertEffect(effect) {
+  const progress = effect.age / effect.duration;
+  const alpha = progress < 0.75 ? 1 : Math.max(0, 1 - (progress - 0.75) / 0.25);
+  const pop = 1 + Math.max(0, 1 - progress * 3.2) * 0.7;
+  const center = effectScreenCenter(effect);
+  const x = center.x;
+  const y = center.y - TILE * 1.35 - Math.min(progress * 8, 4);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.scale(pop, pop);
+  ctx.font = "bold 17px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "rgba(15, 23, 42, 0.9)";
+  ctx.strokeText("！", 0, 0);
+  ctx.fillStyle = "#fde047";
+  ctx.fillText("！", 0, 0);
+  ctx.restore();
 }
 
 function drawSlashEffect(effect) {
@@ -2671,6 +2806,11 @@ function drawEffectsLayer() {
   for (const effect of effects) {
     if (!isVisibleTile(effect.x, effect.y)) continue;
 
+    if (effect.type === "alert") {
+      drawAlertEffect(effect);
+      continue;
+    }
+
     if (effect.type === "slash") {
       drawSlashEffect(effect);
       continue;
@@ -2787,7 +2927,89 @@ function drawInventoryMenu() {
   ctx.restore();
 }
 
+function drawLowHpVignette() {
+  if (state.gameOver.active || state.player.hp <= 0 || state.player.maxHp <= 0) return;
+  const ratio = state.player.hp / state.player.maxHp;
+  if (ratio > 0.35) return;
+
+  const severity = clamp((0.35 - ratio) / 0.35, 0, 1);
+  const pulse = 0.75 + Math.sin(runtime.elapsed / 300) * 0.25;
+  const alpha = (0.16 + severity * 0.3) * pulse;
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const innerRadius = Math.min(canvas.width, canvas.height) * 0.34;
+  const outerRadius = Math.max(canvas.width, canvas.height) * 0.72;
+
+  const gradient = ctx.createRadialGradient(centerX, centerY, innerRadius, centerX, centerY, outerRadius);
+  gradient.addColorStop(0, "rgba(159, 18, 57, 0)");
+  gradient.addColorStop(1, `rgba(159, 18, 57, ${alpha.toFixed(3)})`);
+
+  ctx.save();
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+function drawFloorTransitionLayer() {
+  if (!floorTransition.active) return;
+
+  const fadeOutEnd = floorTransition.fadeOut;
+  const holdEnd = fadeOutEnd + floorTransition.hold;
+  const total = holdEnd + floorTransition.fadeIn;
+  const age = floorTransition.age;
+
+  let darkness;
+  if (age < fadeOutEnd) {
+    darkness = age / fadeOutEnd;
+  } else if (age < holdEnd) {
+    darkness = 1;
+  } else {
+    darkness = Math.max(0, 1 - (age - holdEnd) / floorTransition.fadeIn);
+  }
+
+  ctx.save();
+  ctx.globalAlpha = darkness;
+  ctx.fillStyle = "#020412";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+
+  const cardIn = clamp((age - fadeOutEnd * 0.85) / 180, 0, 1);
+  const cardAlpha = cardIn * darkness;
+  if (cardAlpha <= 0 || !floorTransition.floorGenerated) return;
+
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const rise = (1 - cardIn) * 8;
+
+  ctx.save();
+  ctx.globalAlpha = cardAlpha;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.font = "bold 40px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+  ctx.fillText(`${state.floor}F`, centerX + 2, centerY + rise + 2);
+  ctx.fillStyle = "#e2c56b";
+  ctx.fillText(`${state.floor}F`, centerX, centerY + rise);
+
+  ctx.strokeStyle = "rgba(214, 177, 95, 0.65)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(centerX - 90, centerY + rise - 34);
+  ctx.lineTo(centerX + 90, centerY + rise - 34);
+  ctx.moveTo(centerX - 90, centerY + rise + 34);
+  ctx.lineTo(centerX + 90, centerY + rise + 34);
+  ctx.stroke();
+
+  ctx.font = "12px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "rgba(226, 232, 240, 0.75)";
+  ctx.fillText("さらに深く潜っていく……", centerX, centerY + rise + 52);
+  ctx.restore();
+}
+
 function drawOverlayLayer() {
+  drawLowHpVignette();
+
   if (overlay.flashTime > 0) {
     const progress = overlay.flashTime / Math.max(1, overlay.flashDuration);
     ctx.save();
@@ -2883,6 +3105,7 @@ function draw() {
   drawMinimapLayer();
   drawMenuLayer();
   drawOverlayLayer();
+  drawFloorTransitionLayer();
 }
 
 function updateUi() {
