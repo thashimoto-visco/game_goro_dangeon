@@ -137,6 +137,7 @@ const sprites = {
 const runtime = {
   lastTime: 0,
   elapsed: 0,
+  hitStop: 0,
 };
 
 const debug = {
@@ -351,12 +352,51 @@ const overlay = {
   flashColor: "rgba(255,255,255,0)",
 };
 
+const MINIMAP = {
+  scale: 3,
+  margin: 8,
+  padding: 5,
+};
+
+const minimap = {
+  visible: true,
+  canvas: null,
+  ctx: null,
+  renderedKey: "",
+};
+
+const DASH_WALK_DURATION = 95;
+
+const dash = {
+  active: false,
+  dx: 0,
+  dy: 0,
+};
+
+const floorTransition = {
+  active: false,
+  age: 0,
+  fadeOut: 260,
+  hold: 500,
+  fadeIn: 300,
+  floorGenerated: false,
+};
+
+const UNEXPLORED_DARKNESS = 0.94;
+const EXPLORED_DARKNESS = 0.58;
+const VISIBILITY_FADE_MS = 140;
+
+const visibilityFade = {
+  levels: [],
+};
+
 const sound = {
   context: null,
   master: null,
   muted: true,
   musicTimer: null,
   musicStep: 0,
+  lastHeartbeat: 0,
 };
 
 const ui = {
@@ -381,6 +421,8 @@ const state = {
   corridors: [],
   doorways: [],
   visibleTiles: new Set(),
+  exploredTiles: new Set(),
+  stairsSeen: false,
   enemies: [],
   items: [],
   eventRooms: [],
@@ -722,9 +764,10 @@ function playSound(name) {
     return;
   }
   if (name === "stairs") {
-    playTone(330, 0.06, "square", 0.08);
-    playTone(494, 0.06, "square", 0.08, 0.06);
-    playTone(659, 0.08, "square", 0.08, 0.12);
+    playTone(659, 0.07, "square", 0.08);
+    playTone(523, 0.07, "square", 0.08, 0.09);
+    playTone(392, 0.08, "square", 0.08, 0.18);
+    playTone(330, 0.14, "triangle", 0.08, 0.28);
     return;
   }
   if (name === "gameOver") {
@@ -747,16 +790,39 @@ function playSound(name) {
   }
   if (name === "fail") {
     playTone(90, 0.08, "sawtooth", 0.06);
+    return;
+  }
+  if (name === "encounter") {
+    playTone(740, 0.05, "square", 0.1);
+    playTone(988, 0.07, "square", 0.09, 0.05);
+    return;
+  }
+  if (name === "moveCorridor") {
+    playTone(102, 0.035, "square", 0.05);
+    return;
+  }
+  if (name === "roomEnter") {
+    playTone(392, 0.05, "triangle", 0.055);
+    playTone(494, 0.07, "triangle", 0.05, 0.06);
+    return;
+  }
+  if (name === "heartbeat") {
+    playTone(72, 0.09, "sine", 0.13);
+    playTone(56, 0.12, "sine", 0.11, 0.13);
   }
 }
 
 function startMusic() {
   if (sound.musicTimer || sound.muted) return;
   const notes = [110, 146.83, 164.81, 196, 164.81, 146.83];
+  const dangerNotes = [98, 110, 130.81, 110, 103.83, 92.5];
   sound.musicTimer = window.setInterval(() => {
     if (sound.muted) return;
-    const note = notes[sound.musicStep % notes.length];
-    playTone(note, 0.16, "triangle", 0.025);
+    const inDanger =
+      state.player.hp > 0 && state.player.maxHp > 0 && state.player.hp / state.player.maxHp <= 0.35;
+    const sequence = inDanger ? dangerNotes : notes;
+    const note = sequence[sound.musicStep % sequence.length];
+    playTone(note, inDanger ? 0.11 : 0.16, "triangle", inDanger ? 0.03 : 0.025);
     sound.musicStep += 1;
   }, 420);
 }
@@ -795,14 +861,20 @@ function setPlayerDirection(dx, dy) {
 }
 
 function canAcceptInput() {
-  return !state.action && !state.player.motion && !state.gameOver.active && !isMenuOpen();
+  return (
+    !state.action &&
+    !state.player.motion &&
+    !state.gameOver.active &&
+    !isMenuOpen() &&
+    !floorTransition.active
+  );
 }
 
 function isMenuOpen() {
   return Boolean(state.menu.type);
 }
 
-function startPlayerWalk(fromX, fromY, toX, toY) {
+function startPlayerWalk(fromX, fromY, toX, toY, duration = 160) {
   state.player.motion = {
     type: "walk",
     fromX,
@@ -810,7 +882,7 @@ function startPlayerWalk(fromX, fromY, toX, toY) {
     toX,
     toY,
     age: 0,
-    duration: 160,
+    duration,
   };
 }
 
@@ -899,6 +971,38 @@ function addFloatingText(text, x, y, color = "#ffffff") {
   });
 }
 
+function addAlertEffect(x, y) {
+  effects.push({
+    type: "alert",
+    x,
+    y,
+    age: 0,
+    duration: 620,
+  });
+}
+
+function updateEnemyEncounters() {
+  if (state.gameOver.active) return;
+
+  let encountered = false;
+  for (const enemy of state.enemies) {
+    if (enemy.hp <= 0) continue;
+    const visible = isVisibleTile(enemy.x, enemy.y);
+    if (visible && !enemy.spotted) {
+      enemy.spotted = true;
+      addAlertEffect(enemy.x, enemy.y);
+      addLog(`${enemy.name}が現れた！`);
+      encountered = true;
+    } else if (!visible && enemy.spotted) {
+      enemy.spotted = false;
+    }
+  }
+
+  if (encountered) {
+    playSound("encounter");
+  }
+}
+
 function addSlashEffect(x, y, direction) {
   effects.push({
     type: "slash",
@@ -942,6 +1046,10 @@ function addMonsterBurstEffect(enemy, variant = "hit") {
   });
 }
 
+function startHitStop(duration) {
+  runtime.hitStop = Math.max(runtime.hitStop, duration);
+}
+
 function startCameraShake(duration = 120, strength = 2) {
   camera.shakeTime = duration;
   camera.shakeDuration = duration;
@@ -968,6 +1076,10 @@ function clearTransientVisuals() {
   camera.shakeDuration = 0;
   overlay.flashTime = 0;
   overlay.flashDuration = 0;
+  runtime.hitStop = 0;
+  floorTransition.active = false;
+  floorTransition.age = 0;
+  floorTransition.floorGenerated = false;
   state.player.hitTime = 0;
   state.player.hitDuration = 0;
 }
@@ -1151,10 +1263,61 @@ function computeVisibleTiles() {
     },
     state.player
   );
+
+  for (const key of state.visibleTiles) {
+    state.exploredTiles.add(key);
+  }
+  if (!state.stairsSeen && state.visibleTiles.has(tileKey(state.stairs.x, state.stairs.y))) {
+    state.stairsSeen = true;
+  }
 }
 
 function isVisibleTile(x, y) {
   return state.visibleTiles.has(tileKey(x, y));
+}
+
+function isExploredTile(x, y) {
+  return state.exploredTiles.has(tileKey(x, y));
+}
+
+function resetVisibilityFade() {
+  visibilityFade.levels = Array.from({ length: ROWS }, () => new Array(COLS).fill(1));
+}
+
+function hasVisibleNeighbor(x, y) {
+  return (
+    isVisibleTile(x + 1, y) ||
+    isVisibleTile(x - 1, y) ||
+    isVisibleTile(x, y + 1) ||
+    isVisibleTile(x, y - 1)
+  );
+}
+
+function visibilityDarknessTarget(x, y) {
+  if (isVisibleTile(x, y)) return 0;
+  const softened = hasVisibleNeighbor(x, y);
+  if (isExploredTile(x, y)) {
+    return softened ? EXPLORED_DARKNESS * 0.55 : EXPLORED_DARKNESS;
+  }
+  return softened ? UNEXPLORED_DARKNESS * 0.7 : UNEXPLORED_DARKNESS;
+}
+
+function updateVisibilityFade(delta) {
+  if (!visibilityFade.levels.length) return;
+  const blend = clamp(delta / VISIBILITY_FADE_MS, 0, 1);
+  for (let y = 0; y < ROWS; y++) {
+    const row = visibilityFade.levels[y];
+    for (let x = 0; x < COLS; x++) {
+      const target = visibilityDarknessTarget(x, y);
+      row[x] += (target - row[x]) * blend;
+    }
+  }
+}
+
+function floorDarknessTint() {
+  if (state.floor >= 7) return { r: 26, g: 4, b: 9 };
+  if (state.floor >= 4) return { r: 12, g: 4, b: 24 };
+  return { r: 3, g: 7, b: 18 };
 }
 
 function eventRoomAt(x, y) {
@@ -1223,8 +1386,14 @@ function generateFloor() {
   state.rooms = layout.rooms;
   state.corridors = layout.corridors;
   state.doorways = layout.doorways;
+  state.exploredTiles = new Set();
+  state.stairsSeen = false;
+  minimap.renderedKey = "";
+  dash.active = false;
+  resetVisibilityFade();
   state.action = null;
   const start = layout.rooms[0];
+  start.visited = true;
   state.player.x = start.cx;
   state.player.y = start.cy;
   state.player.hitTime = 0;
@@ -1427,6 +1596,7 @@ function applyPlayerAttackHit(action) {
   addImpactEffect(enemy.x, enemy.y);
   addFloatingText(String(action.result.damage), enemy.x, enemy.y, "#fde68a");
   playSound("hit");
+  startHitStop(action.result.killed ? 130 : 60);
   startCameraShake(90, action.result.killed ? 4 : 2);
   addLog(`${enemy.name}に${action.result.damage}ダメージ。`);
 
@@ -1539,6 +1709,16 @@ function tickTurn(options = {}) {
   }
   if (!options.skipEnemies) {
     moveEnemies(options);
+  }
+}
+
+function handleRoomEntryAtPlayer() {
+  const room = state.rooms.find((entry) => roomContains(entry, state.player.x, state.player.y));
+  if (!room || room.visited) return;
+
+  room.visited = true;
+  if (!eventRoomAt(state.player.x, state.player.y)) {
+    playSound("roomEnter");
   }
 }
 
@@ -1675,7 +1855,7 @@ function resetPlayerRunState() {
   inventoryRenderKey = "";
 }
 
-function tryMove(dx, dy) {
+function tryMove(dx, dy, options = {}) {
   if (!canAcceptInput() || state.player.hp <= 0) return;
   setPlayerDirection(dx, dy);
   const nx = state.player.x + dx;
@@ -1688,23 +1868,156 @@ function tryMove(dx, dy) {
   }
 
   if (!isWalkable(nx, ny)) return;
-  startPlayerWalk(state.player.x, state.player.y, nx, ny);
+  startPlayerWalk(state.player.x, state.player.y, nx, ny, options.walkDuration);
   state.player.x = nx;
   state.player.y = ny;
-  playSound("move");
+  const footingKind = tileKindAt(nx, ny);
+  playSound(footingKind === "corridor" || footingKind === "doorway" ? "moveCorridor" : "move");
   pickUpItemAtPlayer();
+  handleRoomEntryAtPlayer();
   handleEventRoomDiscoveryAtPlayer();
   handleEventObjectAtPlayer();
 
   if (nx === state.stairs.x && ny === state.stairs.y) {
-    state.floor += 1;
-    playSound("stairs");
-    addLog(`${state.floor}Fへ進んだ。`);
-    generateFloor();
+    startFloorTransition();
     return;
   }
 
   tickTurn();
+}
+
+function startFloorTransition() {
+  floorTransition.active = true;
+  floorTransition.age = 0;
+  floorTransition.floorGenerated = false;
+  stopDash();
+}
+
+function updateFloorTransition(delta) {
+  if (!floorTransition.active) return;
+
+  floorTransition.age += delta;
+
+  if (!floorTransition.floorGenerated && floorTransition.age >= floorTransition.fadeOut) {
+    floorTransition.floorGenerated = true;
+    state.floor += 1;
+    playSound("stairs");
+    addLog(`${state.floor}Fへ進んだ。`);
+    generateFloor();
+  }
+
+  const total = floorTransition.fadeOut + floorTransition.hold + floorTransition.fadeIn;
+  if (floorTransition.age >= total) {
+    floorTransition.active = false;
+  }
+}
+
+function anyEnemyVisible() {
+  return state.enemies.some((enemy) => enemy.hp > 0 && isVisibleTile(enemy.x, enemy.y));
+}
+
+function discoveredEventRoomCount() {
+  return state.eventRooms.filter((eventRoom) => eventRoom.discovered).length;
+}
+
+function dashExits(x, y, backDx, backDy) {
+  const deltas = [
+    { dx: 1, dy: 0 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: 1 },
+    { dx: 0, dy: -1 },
+  ];
+  return deltas.filter(
+    (delta) =>
+      !(delta.dx === backDx && delta.dy === backDy) && isWalkable(x + delta.dx, y + delta.dy)
+  );
+}
+
+function stopDash(logText) {
+  if (dash.active && logText) {
+    addLog(logText);
+  }
+  dash.active = false;
+}
+
+function shouldStopDashAfterStep(before) {
+  if (state.gameOver.active) return true;
+  if (state.floor !== before.floor) return true;
+  if (state.player.hp < before.hp) return true;
+  if (state.items.length !== before.itemCount) return true;
+  if (state.player.inventory.length !== before.inventoryCount) return true;
+  if (discoveredEventRoomCount() !== before.discoveredCount) return true;
+  if (itemAt(state.player.x, state.player.y)) return true;
+  if (eventObjectAt(state.player.x, state.player.y)) return true;
+
+  const kind = tileKindAt(state.player.x, state.player.y);
+  if (kind === "doorway") return true;
+  return false;
+}
+
+function dashStep() {
+  if (!dash.active) return;
+  if (!canAcceptInput() || state.player.hp <= 0) {
+    stopDash();
+    return;
+  }
+
+  const nx = state.player.x + dash.dx;
+  const ny = state.player.y + dash.dy;
+  if (!isWalkable(nx, ny) || enemyAt(nx, ny)) {
+    stopDash();
+    return;
+  }
+
+  const before = {
+    floor: state.floor,
+    hp: state.player.hp,
+    itemCount: state.items.length,
+    inventoryCount: state.player.inventory.length,
+    discoveredCount: discoveredEventRoomCount(),
+  };
+
+  tryMove(dash.dx, dash.dy, { walkDuration: DASH_WALK_DURATION });
+
+  if (shouldStopDashAfterStep(before)) {
+    stopDash();
+    return;
+  }
+
+  computeVisibleTiles();
+  if (anyEnemyVisible()) {
+    stopDash("敵の気配を感じて立ち止まった。");
+    return;
+  }
+
+  if (tileKindAt(state.player.x, state.player.y) === "corridor") {
+    const exits = dashExits(state.player.x, state.player.y, -dash.dx, -dash.dy);
+    if (exits.length === 0) {
+      stopDash();
+      return;
+    }
+    if (exits.length >= 2) {
+      stopDash("分かれ道で立ち止まった。");
+      return;
+    }
+    dash.dx = exits[0].dx;
+    dash.dy = exits[0].dy;
+  }
+}
+
+function startDash(dx, dy) {
+  if (!canAcceptInput() || state.player.hp <= 0) return;
+  dash.active = true;
+  dash.dx = dx;
+  dash.dy = dy;
+  dashStep();
+}
+
+function updateDash() {
+  if (!dash.active) return;
+  if (canAcceptInput()) {
+    dashStep();
+  }
 }
 
 
@@ -1796,7 +2109,8 @@ function drawRoundRectPath(x, y, w, h, r) {
 function enemyMotionPhase(enemy, motion) {
   const spriteOffset = enemy.sprite.length * 29;
   const positionOffset = enemy.x * 41 + enemy.y * 53;
-  const cycle = Math.max(1, motion.cycle || 760);
+  const alertFactor = enemy.spotted ? 0.6 : 1;
+  const cycle = Math.max(1, (motion.cycle || 760) * alertFactor);
   return ((runtime.elapsed + spriteOffset + positionOffset) % cycle) / cycle;
 }
 
@@ -1902,17 +2216,41 @@ function drawSprite(sprite, dx, dy, dw, dh) {
 }
 
 function updateAnimations(delta) {
+  if (runtime.hitStop > 0) {
+    runtime.hitStop = Math.max(0, runtime.hitStop - delta);
+    return;
+  }
+
   runtime.elapsed += delta;
   updatePlayerMotion(delta);
   updatePlayerReaction(delta);
   updateAction(delta);
+  updateDash();
   updateEnemyReactions(delta);
   computeVisibleTiles();
+  updateEnemyEncounters();
+  updateVisibilityFade(delta);
+  updateHeartbeat();
   updateCameraTarget();
   updateEffects(delta);
   updateGameOver(delta);
   updateCamera(delta);
   updateOverlay(delta);
+  updateFloorTransition(delta);
+}
+
+function updateHeartbeat() {
+  if (sound.muted || state.gameOver.active || state.player.hp <= 0 || state.player.maxHp <= 0) {
+    return;
+  }
+  const ratio = state.player.hp / state.player.maxHp;
+  if (ratio > 0.35) return;
+
+  const interval = ratio <= 0.18 ? 700 : 980;
+  if (runtime.elapsed - (sound.lastHeartbeat || 0) >= interval) {
+    sound.lastHeartbeat = runtime.elapsed;
+    playSound("heartbeat");
+  }
 }
 
 function updateGameOver(delta) {
@@ -1981,14 +2319,110 @@ function drawVisibilityLayer() {
   const startY = clamp(Math.floor(camera.y / TILE) - 1, 0, ROWS - 1);
   const endY = clamp(Math.ceil((camera.y + canvas.height) / TILE) + 1, 0, ROWS);
 
+  const tint = floorDarknessTint();
+
   ctx.save();
-  ctx.fillStyle = "rgba(3, 7, 18, 0.86)";
   for (let y = startY; y < endY; y++) {
+    const row = visibilityFade.levels[y];
+    if (!row) continue;
     for (let x = startX; x < endX; x++) {
-      if (isVisibleTile(x, y)) continue;
+      const level = row[x];
+      if (level < 0.02) continue;
+      ctx.fillStyle = `rgba(${tint.r}, ${tint.g}, ${tint.b}, ${level.toFixed(3)})`;
       ctx.fillRect(gridToScreenX(x), gridToScreenY(y), TILE, TILE);
     }
   }
+  ctx.restore();
+
+  drawPlayerLight();
+}
+
+function drawPlayerLight() {
+  if (state.gameOver.active) return;
+
+  const visual = getPlayerVisualGrid();
+  const cx = worldToScreenX(gridToWorldX(visual.x) + TILE / 2);
+  const cy = worldToScreenY(gridToWorldY(visual.y) + TILE / 2);
+  const flicker = Math.sin(runtime.elapsed / 850) * 2.5;
+  const radius = TILE * 2.6 + flicker;
+
+  const gradient = ctx.createRadialGradient(cx, cy, TILE * 0.4, cx, cy, radius);
+  gradient.addColorStop(0, "rgba(255, 216, 150, 0.085)");
+  gradient.addColorStop(0.55, "rgba(255, 206, 130, 0.04)");
+  gradient.addColorStop(1, "rgba(255, 200, 120, 0)");
+
+  ctx.save();
+  ctx.fillStyle = gradient;
+  ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+  ctx.restore();
+}
+
+function minimapTileColor(kind) {
+  if (kind === "room") return "rgba(203, 213, 225, 0.85)";
+  if (kind === "corridor") return "rgba(122, 136, 158, 0.8)";
+  if (kind === "doorway") return "rgba(240, 244, 250, 0.95)";
+  return null;
+}
+
+function updateMinimapCanvas() {
+  const renderKey = `${state.floor}:${state.exploredTiles.size}:${state.stairsSeen}`;
+  if (renderKey === minimap.renderedKey && minimap.canvas) return;
+  minimap.renderedKey = renderKey;
+
+  if (!minimap.canvas) {
+    minimap.canvas = document.createElement("canvas");
+    minimap.canvas.width = COLS * MINIMAP.scale;
+    minimap.canvas.height = ROWS * MINIMAP.scale;
+    minimap.ctx = minimap.canvas.getContext("2d");
+  }
+
+  const mctx = minimap.ctx;
+  mctx.clearRect(0, 0, minimap.canvas.width, minimap.canvas.height);
+
+  for (const entry of state.exploredTiles) {
+    const [x, y] = entry.split(",").map(Number);
+    const color = minimapTileColor(tileKindAt(x, y));
+    if (!color) continue;
+    mctx.fillStyle = color;
+    mctx.fillRect(x * MINIMAP.scale, y * MINIMAP.scale, MINIMAP.scale, MINIMAP.scale);
+  }
+
+  if (state.stairsSeen) {
+    const sx = state.stairs.x * MINIMAP.scale;
+    const sy = state.stairs.y * MINIMAP.scale;
+    mctx.fillStyle = "#38bdf8";
+    mctx.fillRect(sx - 1, sy - 1, MINIMAP.scale + 2, MINIMAP.scale + 2);
+  }
+}
+
+function drawMinimapLayer() {
+  if (!minimap.visible) return;
+  updateMinimapCanvas();
+
+  const w = minimap.canvas.width + MINIMAP.padding * 2;
+  const h = minimap.canvas.height + MINIMAP.padding * 2;
+  const px = canvas.width - w - MINIMAP.margin;
+  const py = MINIMAP.margin;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(2, 6, 23, 0.74)";
+  ctx.beginPath();
+  drawRoundRectPath(px, py, w, h, 6);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.55)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.drawImage(minimap.canvas, px + MINIMAP.padding, py + MINIMAP.padding);
+
+  const pulse = 0.55 + Math.sin(runtime.elapsed / 220) * 0.45;
+  const playerX = px + MINIMAP.padding + (state.player.x + 0.5) * MINIMAP.scale;
+  const playerY = py + MINIMAP.padding + (state.player.y + 0.5) * MINIMAP.scale;
+  ctx.globalAlpha = clamp(pulse, 0.25, 1);
+  ctx.fillStyle = "#facc15";
+  ctx.beginPath();
+  ctx.arc(playerX, playerY, 2.6, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -2025,7 +2459,8 @@ function drawEventRoomLayer() {
 }
 
 function drawStairsLayer() {
-  if (!isVisibleTile(state.stairs.x, state.stairs.y)) return;
+  const stairsVisible = isVisibleTile(state.stairs.x, state.stairs.y);
+  if (!stairsVisible && !state.stairsSeen) return;
 
   const sx = gridToScreenX(state.stairs.x) + STAIRS_DRAW.offsetX;
   const sy = gridToScreenY(state.stairs.y) + STAIRS_DRAW.offsetY;
@@ -2154,16 +2589,17 @@ function actorDrawPosition(actor, draw) {
     const progress = actor.hitTime / Math.max(1, actor.hitDuration || 1);
     const direction = directionToDelta(actor.hitDirection || "down");
     const shake = Math.sin(progress * Math.PI * 8) * 1.4;
-    reactionX -= direction.dx * PLAYER_MOTION.damageKnockback * progress;
-    reactionY -= direction.dy * PLAYER_MOTION.damageKnockback * progress;
+    reactionX += direction.dx * PLAYER_MOTION.damageKnockback * progress;
+    reactionY += direction.dy * PLAYER_MOTION.damageKnockback * progress;
     reactionX += shake;
   }
 
   if (actor !== state.player && actor.hitTime > 0) {
     const progress = actor.hitTime / Math.max(1, actor.hitDuration || 1);
     const direction = directionToDelta(actor.hitDirection || "down");
-    reactionX -= direction.dx * 5 * progress;
-    reactionY -= direction.dy * 5 * progress;
+    const knockback = monsterSystem.definitionByKey(actor.sprite).motion.hitKnockback || 5;
+    reactionX += direction.dx * knockback * progress;
+    reactionY += direction.dy * knockback * progress;
   }
 
   if (actor !== state.player && actor.counterTime > 0) {
@@ -2258,6 +2694,23 @@ function drawPlayerSpriteWithTuning(sprite, position, tuning) {
   return didDraw;
 }
 
+function drawEnemyHpBar(enemy, position, draw) {
+  if (!enemy.maxHp || enemy.hp >= enemy.maxHp || enemy.hp <= 0) return;
+
+  const ratio = clamp(enemy.hp / enemy.maxHp, 0, 1);
+  const barWidth = 26;
+  const barHeight = 3.5;
+  const x = position.x + draw.w / 2 - barWidth / 2;
+  const y = position.y - 7;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(3, 7, 18, 0.72)";
+  ctx.fillRect(x - 1, y - 1, barWidth + 2, barHeight + 2);
+  ctx.fillStyle = ratio > 0.5 ? "#4ade80" : ratio > 0.25 ? "#facc15" : "#f87171";
+  ctx.fillRect(x, y, barWidth * ratio, barHeight);
+  ctx.restore();
+}
+
 function drawEnemyActor(enemy) {
   const monster = monsterSystem.definitionByKey(enemy.sprite);
   const draw = monster.draw;
@@ -2267,6 +2720,7 @@ function drawEnemyActor(enemy) {
   ctx.save();
   drawEnemySpriteWithIdle(enemy, sprite, position, draw, motion);
   ctx.restore();
+  drawEnemyHpBar(enemy, position, draw);
 }
 
 function drawPlayerActor() {
@@ -2328,6 +2782,29 @@ function effectScreenCenter(effect) {
     x: worldToScreenX(gridToWorldX(effect.x) + TILE / 2),
     y: worldToScreenY(gridToWorldY(effect.y) + TILE / 2),
   };
+}
+
+function drawAlertEffect(effect) {
+  const progress = effect.age / effect.duration;
+  const alpha = progress < 0.75 ? 1 : Math.max(0, 1 - (progress - 0.75) / 0.25);
+  const pop = 1 + Math.max(0, 1 - progress * 3.2) * 0.7;
+  const center = effectScreenCenter(effect);
+  const x = center.x;
+  const y = center.y - TILE * 1.35 - Math.min(progress * 8, 4);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.scale(pop, pop);
+  ctx.font = "bold 17px 'Yu Gothic UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "rgba(15, 23, 42, 0.9)";
+  ctx.strokeText("！", 0, 0);
+  ctx.fillStyle = "#fde047";
+  ctx.fillText("！", 0, 0);
+  ctx.restore();
 }
 
 function drawSlashEffect(effect) {
@@ -2452,6 +2929,11 @@ function drawEffectsLayer() {
   for (const effect of effects) {
     if (!isVisibleTile(effect.x, effect.y)) continue;
 
+    if (effect.type === "alert") {
+      drawAlertEffect(effect);
+      continue;
+    }
+
     if (effect.type === "slash") {
       drawSlashEffect(effect);
       continue;
@@ -2568,7 +3050,89 @@ function drawInventoryMenu() {
   ctx.restore();
 }
 
+function drawLowHpVignette() {
+  if (state.gameOver.active || state.player.hp <= 0 || state.player.maxHp <= 0) return;
+  const ratio = state.player.hp / state.player.maxHp;
+  if (ratio > 0.35) return;
+
+  const severity = clamp((0.35 - ratio) / 0.35, 0, 1);
+  const pulse = 0.75 + Math.sin(runtime.elapsed / 300) * 0.25;
+  const alpha = (0.16 + severity * 0.3) * pulse;
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const innerRadius = Math.min(canvas.width, canvas.height) * 0.34;
+  const outerRadius = Math.max(canvas.width, canvas.height) * 0.72;
+
+  const gradient = ctx.createRadialGradient(centerX, centerY, innerRadius, centerX, centerY, outerRadius);
+  gradient.addColorStop(0, "rgba(159, 18, 57, 0)");
+  gradient.addColorStop(1, `rgba(159, 18, 57, ${alpha.toFixed(3)})`);
+
+  ctx.save();
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+function drawFloorTransitionLayer() {
+  if (!floorTransition.active) return;
+
+  const fadeOutEnd = floorTransition.fadeOut;
+  const holdEnd = fadeOutEnd + floorTransition.hold;
+  const total = holdEnd + floorTransition.fadeIn;
+  const age = floorTransition.age;
+
+  let darkness;
+  if (age < fadeOutEnd) {
+    darkness = age / fadeOutEnd;
+  } else if (age < holdEnd) {
+    darkness = 1;
+  } else {
+    darkness = Math.max(0, 1 - (age - holdEnd) / floorTransition.fadeIn);
+  }
+
+  ctx.save();
+  ctx.globalAlpha = darkness;
+  ctx.fillStyle = "#020412";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+
+  const cardIn = clamp((age - fadeOutEnd * 0.85) / 180, 0, 1);
+  const cardAlpha = cardIn * darkness;
+  if (cardAlpha <= 0 || !floorTransition.floorGenerated) return;
+
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const rise = (1 - cardIn) * 8;
+
+  ctx.save();
+  ctx.globalAlpha = cardAlpha;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.font = "bold 40px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+  ctx.fillText(`${state.floor}F`, centerX + 2, centerY + rise + 2);
+  ctx.fillStyle = "#e2c56b";
+  ctx.fillText(`${state.floor}F`, centerX, centerY + rise);
+
+  ctx.strokeStyle = "rgba(214, 177, 95, 0.65)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(centerX - 90, centerY + rise - 34);
+  ctx.lineTo(centerX + 90, centerY + rise - 34);
+  ctx.moveTo(centerX - 90, centerY + rise + 34);
+  ctx.lineTo(centerX + 90, centerY + rise + 34);
+  ctx.stroke();
+
+  ctx.font = "12px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "rgba(226, 232, 240, 0.75)";
+  ctx.fillText("さらに深く潜っていく……", centerX, centerY + rise + 52);
+  ctx.restore();
+}
+
 function drawOverlayLayer() {
+  drawLowHpVignette();
+
   if (overlay.flashTime > 0) {
     const progress = overlay.flashTime / Math.max(1, overlay.flashDuration);
     ctx.save();
@@ -2661,8 +3225,10 @@ function draw() {
   drawDebugStructureOverlay();
   ctx.restore();
 
+  drawMinimapLayer();
   drawMenuLayer();
   drawOverlayLayer();
+  drawFloorTransitionLayer();
 }
 
 function updateUi() {
@@ -2734,9 +3300,22 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
   }
 
+  if (dash.active) {
+    if (!event.repeat) {
+      stopDash();
+    }
+    return;
+  }
+
   if (key === "f2") {
     debug.structureOverlay = !debug.structureOverlay;
     addLog(`構造表示: ${debug.structureOverlay ? "ON" : "OFF"}`);
+    return;
+  }
+
+  if (key === "m") {
+    minimap.visible = !minimap.visible;
+    addLog(`ミニマップ: ${minimap.visible ? "ON" : "OFF"}`);
     return;
   }
 
@@ -2763,10 +3342,11 @@ window.addEventListener("keydown", (event) => {
     useInventorySlot(Number(key) - 1);
     return;
   }
-  if (key === "arrowup" || key === "w") tryMove(0, -1);
-  if (key === "arrowdown" || key === "s") tryMove(0, 1);
-  if (key === "arrowleft" || key === "a") tryMove(-1, 0);
-  if (key === "arrowright" || key === "d") tryMove(1, 0);
+  const move = event.shiftKey ? startDash : tryMove;
+  if (key === "arrowup" || key === "w") move(0, -1);
+  if (key === "arrowdown" || key === "s") move(0, 1);
+  if (key === "arrowleft" || key === "a") move(-1, 0);
+  if (key === "arrowright" || key === "d") move(1, 0);
   if (key === " " && canAcceptInput()) tickTurn();
 });
 

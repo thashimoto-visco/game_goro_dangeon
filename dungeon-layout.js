@@ -144,7 +144,19 @@
           return path.reverse();
         }
 
-        for (const direction of shuffledDirections()) {
+        const previous = cameFrom.get(key(current.x, current.y));
+        const directions = shuffledDirections();
+        if (previous) {
+          const straightDx = current.x - previous.x;
+          const straightDy = current.y - previous.y;
+          directions.sort(
+            (a, b) =>
+              Number(b.dx === straightDx && b.dy === straightDy) -
+              Number(a.dx === straightDx && a.dy === straightDy)
+          );
+        }
+
+        for (const direction of directions) {
           const next = { x: current.x + direction.dx, y: current.y + direction.dy };
           const nextKey = key(next.x, next.y);
           if (visited.has(nextKey)) continue;

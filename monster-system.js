@@ -18,6 +18,7 @@
     hitScaleX: 1.08,
     hitScaleY: 0.92,
     hitRotation: 0.09,
+    hitKnockback: 5,
     attackScaleX: 1.04,
     attackScaleY: 1.02,
     attackRotation: 0.07,
@@ -105,10 +106,12 @@
 
     function createEnemy(type, x, y, floor) {
       const floorBonus = Math.max(0, floor - 1);
+      const hp = Math.round(type.baseHp + floorBonus * type.hpScale);
       return {
         x,
         y,
-        hp: Math.round(type.baseHp + floorBonus * type.hpScale),
+        hp,
+        maxHp: hp,
         atk: Math.round(type.baseAtk + floorBonus * type.atkScale),
         exp: type.exp,
         name: type.name,
