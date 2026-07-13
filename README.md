@@ -22,6 +22,7 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 15. 一度探索した場所は薄暗い「記憶表示」で見え続ける。
 16. `M` で画面右上のミニマップを表示/非表示。
 17. `Shift` + 方向キーでダッシュ。一本道の曲がり角は自動で曲がる。敵が見えた時、分かれ道、入口、アイテム、階段などで自動停止。何かキーを押すと中断。
+18. 5Fでは、低確率イベントの代わりに強敵のミニ悪魔ちゃんが現れることがある。撃破は必須ではない。
 
 ## 仕様（現状）
 
@@ -52,6 +53,10 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 - 低確率で出現する特殊部屋
 - 宝物部屋の追加アイテム配置
 - 1回だけ使える回復の泉
+- 敵種とは独立した通常／強敵の遭遇ランク
+- 5Fの検証用強敵遭遇（安全な特殊部屋を作れないフロアでは進行優先でスキップ）
+- 強敵の階層予兆、部屋発見、初回視認ログと専用演出
+- 強敵撃破時の経験値補正、確定アイテムドロップ、強敵撃破数
 - 全滅時の死因表示、暗転、倒れ演出、戦績表示、再挑戦導線
 - 初期ミュートのSE/BGMと音ON/OFFボタン
 - 部屋と通路でピッチの違う足音、未探索部屋への初入室スティング
@@ -65,6 +70,7 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 
 - 旧/参照用吾郎画像: `assets/goro.svg`, `assets/goro_player.svg`, `assets/goro_sprite_sheet.svg`
 - モンスター画像: `assets/monster_slime.svg`, `assets/monster_bat.svg`, `assets/monster_golem.svg`
+- ミニ悪魔ちゃん画像: `assets/monster_mini_devil.svg`
 
 - タイル画像: `assets/tiles/floor_01.svg`, `assets/tiles/floor_02.svg`, `assets/tiles/floor_03.svg`, `assets/tiles/wall_01.svg`, `assets/tiles/wall_02.svg`, `assets/tiles/wall_03.svg`, `assets/tiles/stairs_down.svg`
 - 仮アイコン画像: `assets/icons/item_weapon.svg`, `assets/icons/item_food.svg`, `assets/icons/item_potion.svg`
