@@ -45,8 +45,9 @@ if (!window.GORO_DUNGEON_SPECIAL_ENCOUNTERS || !window.GORO_DUNGEON_ENCOUNTER_DA
 const encounterData = window.GORO_DUNGEON_ENCOUNTER_DATA;
 const specialEncounterSystem = window.GORO_DUNGEON_SPECIAL_ENCOUNTERS.createSystem({
   rng,
-  isSameRoom,
-  roomsOverlap,
+  weightedPickEntry,
+  findTableForFloor: (tables, floor) => tableForFloor(tables, floor, { fallbackToLast: false }),
+  isRoomEligible: specialEncounterRoomIsEligible,
 });
 
 function resolveAssetUrl(path) {
@@ -150,8 +151,15 @@ const runtime = {
   hitStop: 0,
 };
 
+const debugParams = new URLSearchParams(window.location.search);
+const debugHostAllowed =
+  window.location.protocol === "file:" || ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+const debugStartFloor = Number.parseInt(debugParams.get("floor"), 10);
 const debug = {
-  enabled: new URLSearchParams(window.location.search).get("debug") === "1",
+  enabled: debugHostAllowed && debugParams.get("debug") === "1",
+  startFloor: Number.isInteger(debugStartFloor) && debugStartFloor >= 1 && debugStartFloor <= 99 ? debugStartFloor : null,
+  encounterStart: debugParams.get("encounter") === "1",
+  loadout: debugParams.get("loadout") === "1",
   structureOverlay: false,
 };
 
@@ -326,13 +334,20 @@ const eventRoomTypes = {
     },
   },
   stronghold: {
-    roomColor: "rgba(147, 51, 234, 0.14)",
+    roomColor(eventRoom) {
+      const encounter = specialEncounterById(eventRoom.encounterId);
+      return encounter?.rank === "strong" ? "rgba(147, 51, 234, 0.14)" : "rgba(255, 255, 255, 0.08)";
+    },
     onDiscover(eventRoom) {
       const encounter = specialEncounterById(eventRoom.encounterId);
       const message = resolveSpecialEncounterMessage(encounter, "roomPresence");
       if (message) addLog(message);
-      playSound("strongPresence");
-      startFlash("rgba(147,51,234,0.18)", 170);
+      if (encounter?.rank === "strong") {
+        playSound("strongPresence");
+        startFlash("rgba(147,51,234,0.18)", 170);
+      } else {
+        playSound("roomEnter");
+      }
       stopDash();
     },
   },
@@ -595,8 +610,10 @@ function recoveryGainForHunger(hunger) {
   return 0;
 }
 
-function tableForFloor(tables, floor) {
-  return tables.find((table) => floor >= table.minFloor && floor <= table.maxFloor) || tables[tables.length - 1];
+function tableForFloor(tables, floor, options = {}) {
+  const match = (tables || []).find((table) => floor >= table.minFloor && floor <= table.maxFloor);
+  if (match) return match;
+  return options.fallbackToLast === false ? null : tables?.[tables.length - 1] || null;
 }
 
 function weightedPick(entries) {
@@ -606,7 +623,7 @@ function weightedPick(entries) {
 
 function weightedPickEntry(entries) {
   const candidates = (entries || []).filter((entry) => entry && entry.weight > 0);
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) return (entries || []).find(Boolean) || null;
   const total = candidates.reduce((sum, entry) => sum + entry.weight, 0);
   let roll = rng(1, total);
 
@@ -1311,6 +1328,12 @@ function roomsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+function specialEncounterRoomIsEligible(room, { startRoom, stairRoom, table }) {
+  if (isSameRoom(room, startRoom) || isSameRoom(room, stairRoom)) return false;
+  if (roomsOverlap(room, startRoom) || roomsOverlap(room, stairRoom)) return false;
+  return room.w >= (table.minRoomW || 1) && room.h >= (table.minRoomH || 1);
+}
+
 function roomContains(room, x, y) {
   return x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h;
 }
@@ -1465,6 +1488,10 @@ function selectEventRooms(rooms, startRoom, stairRoom) {
     return;
   }
 
+  selectNormalEventRooms(rooms, startRoom, stairRoom);
+}
+
+function selectNormalEventRooms(rooms, startRoom, stairRoom) {
   const result = dungeonEvents.selectRooms({
     rooms,
     startRoom,
@@ -1480,6 +1507,7 @@ function eventObjectPlacementBlocked(x, y) {
   if (!isWalkable(x, y)) return true;
   if (state.player.x === x && state.player.y === y) return true;
   if (state.stairs.x === x && state.stairs.y === y) return true;
+  if (enemyAt(x, y) || itemAt(x, y)) return true;
   return Boolean(eventObjectAt(x, y));
 }
 
@@ -1533,7 +1561,7 @@ function generateFloor() {
   placeEventRewards();
   computeVisibleTiles();
   announceSpecialEncounterPresence();
-  if (debug.enabled && new URLSearchParams(window.location.search).get("encounter") === "1") {
+  if (debug.enabled && debug.encounterStart) {
     handleEventRoomDiscoveryAtPlayer();
   }
 }
@@ -1578,6 +1606,7 @@ function playerAttackPower() {
 function placeEnemies(rooms) {
   state.enemies = [];
   const table = tableForFloor(floorEnemyTables, state.floor);
+  if (!table?.entries?.length) return;
   const candidates = rooms
     .slice(1)
     .filter((room) => !state.specialEncounter || !isSameRoom(room, state.specialEncounter.room));
@@ -1592,6 +1621,7 @@ function placeEnemies(rooms) {
 
     if (isEnemyPlacementBlocked(x, y)) continue;
     const entry = weightedPickEntry(table.entries);
+    if (!entry?.type) break;
     const type = monsterTypeByKey(entry.type);
     state.enemies.push(createEnemy(type, x, y, { encounterRank: entry.rank || "normal" }));
   }
@@ -1604,6 +1634,9 @@ function placeSpecialEncounterEnemy() {
   if (!position) {
     state.eventRooms = state.eventRooms.filter((room) => room.encounterId !== encounter.id);
     state.specialEncounter = null;
+    state.eventObjects = [];
+    selectNormalEventRooms(state.rooms, state.rooms[0], state.rooms[state.rooms.length - 1]);
+    placeEventObjects();
     return;
   }
 
@@ -1619,19 +1652,8 @@ function placeSpecialEncounterEnemy() {
 }
 
 function positionDebugPlayerNearSpecialEncounter() {
-  if (!debug.enabled || new URLSearchParams(window.location.search).get("encounter") !== "1") return;
-  if (new URLSearchParams(window.location.search).get("loadout") === "1") {
-    const level = levelEntry(3);
-    state.player.level = level.level;
-    state.player.maxHp = level.maxHp;
-    state.player.hp = level.maxHp;
-    state.player.atk = level.atk;
-    state.player.def = level.def;
-    const weapon = { id: nextItemId, type: "ironSword" };
-    nextItemId += 1;
-    state.player.inventory = [weapon];
-    state.player.weapon = weapon.id;
-  }
+  if (!debug.enabled || !debug.encounterStart) return;
+  applyDebugEncounterLoadout();
   const enemy = state.enemies.find((candidate) => candidate.encounterId === state.specialEncounter?.id);
   if (!enemy) return;
   const positions = [
@@ -1649,17 +1671,31 @@ function positionDebugPlayerNearSpecialEncounter() {
   updateCameraTarget();
 }
 
+function applyDebugEncounterLoadout() {
+  if (!debug.loadout) return;
+  const level = levelEntry(3);
+  state.player.level = level.level;
+  state.player.maxHp = level.maxHp;
+  state.player.hp = level.maxHp;
+  state.player.atk = level.atk;
+  state.player.def = level.def;
+  const weapon = { id: nextItemId, type: "ironSword" };
+  nextItemId += 1;
+  state.player.inventory = [weapon];
+  state.player.weapon = weapon.id;
+}
+
 function announceSpecialEncounterPresence() {
   const encounter = state.specialEncounter;
   if (!encounter) return;
   const message = resolveSpecialEncounterMessage(encounter, "floorPresence");
   if (message) addLog(message);
-  playSound("strongPresence");
+  if (encounter.rank === "strong") playSound("strongPresence");
 }
 
 function randomItemType() {
   const table = tableForFloor(floorItemTables, state.floor);
-  return weightedPick(table.entries);
+  return table?.entries?.length ? weightedPick(table.entries) : null;
 }
 
 function isItemPlacementBlocked(x, y) {
@@ -1674,6 +1710,7 @@ function isItemPlacementBlocked(x, y) {
 function placeItems(rooms) {
   state.items = [];
   const table = tableForFloor(floorItemTables, state.floor);
+  if (!table?.entries?.length || !Array.isArray(table.count)) return;
   const candidates = rooms
     .slice(1)
     .filter((room) => !state.specialEncounter || !isSameRoom(room, state.specialEncounter.room));
@@ -1687,9 +1724,11 @@ function placeItems(rooms) {
     const y = rng(room.y, room.y + room.h - 1);
 
     if (isItemPlacementBlocked(x, y)) continue;
+    const type = randomItemType();
+    if (!type || !itemTypes[type]) break;
     state.items.push({
       id: nextItemId,
-      type: randomItemType(),
+      type,
       x,
       y,
     });
@@ -1699,6 +1738,7 @@ function placeItems(rooms) {
 
 function placeTreasureRoomRewards(eventRoom) {
   const table = treasureRewardTableForCurrentFloor();
+  if (!table?.entries?.length || !Array.isArray(table.count)) return;
   const count = rng(table.count[0], table.count[1]);
   let placed = 0;
   let attempts = 0;
@@ -1709,9 +1749,11 @@ function placeTreasureRoomRewards(eventRoom) {
     const y = rng(eventRoom.room.y, eventRoom.room.y + eventRoom.room.h - 1);
 
     if (isItemPlacementBlocked(x, y)) continue;
+    const type = weightedPick(table.entries);
+    if (!type || !itemTypes[type]) break;
     state.items.push({
       id: nextItemId,
-      type: weightedPick(table.entries),
+      type,
       x,
       y,
     });
@@ -1754,6 +1796,7 @@ function placeEnemyGuaranteedReward(enemy) {
     return null;
   }
   const type = weightedPick(profile.entries);
+  if (!type || !itemTypes[type]) return null;
   const item = { id: nextItemId, type, x: position.x, y: position.y };
   nextItemId += 1;
   state.items.push(item);
@@ -2720,15 +2763,16 @@ function drawDebugStructureOverlay() {
   );
 }
 
-function eventRoomColor(type) {
-  const definition = eventRoomType(type);
-  return definition && definition.roomColor ? definition.roomColor : "rgba(255, 255, 255, 0.08)";
+function eventRoomColor(eventRoom) {
+  const definition = eventRoomType(eventRoom.type);
+  if (!definition?.roomColor) return "rgba(255, 255, 255, 0.08)";
+  return typeof definition.roomColor === "function" ? definition.roomColor(eventRoom) : definition.roomColor;
 }
 
 function drawEventRoomLayer() {
   for (const eventRoom of state.eventRooms) {
     ctx.save();
-    ctx.fillStyle = eventRoomColor(eventRoom.type);
+    ctx.fillStyle = eventRoomColor(eventRoom);
     for (let y = eventRoom.room.y; y < eventRoom.room.y + eventRoom.room.h; y++) {
       for (let x = eventRoom.room.x; x < eventRoom.room.x + eventRoom.room.w; x++) {
         if (!isWalkable(x, y)) continue;
@@ -3669,10 +3713,7 @@ if (ui.soundToggle) {
 }
 
 if (debug.enabled) {
-  const debugFloor = Number.parseInt(new URLSearchParams(window.location.search).get("floor"), 10);
-  if (Number.isInteger(debugFloor) && debugFloor >= 1 && debugFloor <= 99) {
-    state.floor = debugFloor;
-  }
+  if (debug.startFloor !== null) state.floor = debug.startFloor;
   window.GORO_DUNGEON_DEBUG_SNAPSHOT = () => ({
     floor: state.floor,
     map: state.map.map((row) => row.slice()),

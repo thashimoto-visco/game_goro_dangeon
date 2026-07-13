@@ -27,6 +27,8 @@
         maxFloor: 5,
         chance: 100,
         roomType: "stronghold",
+        minRoomW: 5,
+        minRoomH: 4,
         entries: [{ monster: "miniDevil", rank: "strong", weight: 100 }],
       },
     ],
@@ -42,4 +44,3 @@
     },
   };
 })();
-

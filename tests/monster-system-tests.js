@@ -80,6 +80,19 @@ const rankFallback = resolver.resolveMessage({
 });
 assert.strictEqual(rankFallback, "強敵のテスト敵が現れた！");
 
+const genericCatalogMustNotHideStrongRank = resolver.resolveMessage({
+  encounter: { rank: "strong", messages: {} },
+  monster: { name: "テスト敵", messages: { encounter: "テスト敵が現れた！" } },
+  rankProfile: strongProfile,
+  kind: "encounter",
+  name: "テスト敵",
+});
+assert.strictEqual(
+  genericCatalogMustNotHideStrongRank,
+  "強敵のテスト敵が現れた！",
+  "rank-specific strong message should win over a generic catalog encounter message"
+);
+
 const normalFallback = resolver.resolveMessage({
   encounter: { rank: "normal", messages: {} },
   monster: { name: "テスト敵", messages: {} },
@@ -91,4 +104,3 @@ assert.strictEqual(normalFallback, "テスト敵が現れた！");
 assert.notStrictEqual(normalFallback.includes("undefined"), true);
 
 console.log("monster system tests passed");
-

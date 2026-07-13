@@ -2,25 +2,9 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { clamp, createSeededRng, isSameRoom, roomsOverlap } = require("./test-helpers");
 
 const root = path.resolve(__dirname, "..");
-
-function createSeededRng(seed) {
-  let state = seed >>> 0;
-  return function rng(min, max) {
-    state = (state * 1664525 + 1013904223) >>> 0;
-    return min + (state % (max - min + 1));
-  };
-}
-
-function isSameRoom(a, b) {
-  return a && b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
-}
-
-function roomsOverlap(a, b) {
-  if (!a || !b) return false;
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-}
 
 const context = { console, Math, Array, Object, Number, String, Boolean, Error, window: {} };
 vm.createContext(context);
@@ -36,12 +20,35 @@ const rooms = [
   { id: 4, x: 32, y: 2, w: 7, h: 6, cx: 35, cy: 4 },
 ];
 
-function makeSystem(seed) {
+function createSpecialEncounterSystem(rng) {
   return context.window.GORO_DUNGEON_SPECIAL_ENCOUNTERS.createSystem({
-    rng: createSeededRng(seed),
-    isSameRoom,
-    roomsOverlap,
+    rng,
+    weightedPickEntry(entries) {
+      const candidates = (entries || []).filter((entry) => entry && entry.weight > 0);
+      const pool = candidates.length > 0 ? candidates : (entries || []).filter(Boolean);
+      if (pool.length === 0) return null;
+      const total = candidates.reduce((sum, entry) => sum + entry.weight, 0);
+      if (total <= 0) return pool[0];
+      let roll = rng(1, total);
+      for (const entry of candidates) {
+        roll -= entry.weight;
+        if (roll <= 0) return entry;
+      }
+      return candidates[0];
+    },
+    findTableForFloor(sourceTables, floor) {
+      return sourceTables.find((table) => floor >= table.minFloor && floor <= table.maxFloor) || null;
+    },
+    isRoomEligible(room, { startRoom, stairRoom, table }) {
+      if (isSameRoom(room, startRoom) || isSameRoom(room, stairRoom)) return false;
+      if (roomsOverlap(room, startRoom) || roomsOverlap(room, stairRoom)) return false;
+      return room.w >= (table.minRoomW || 1) && room.h >= (table.minRoomH || 1);
+    },
   });
+}
+
+function makeSystem(seed) {
+  return createSpecialEncounterSystem(createSeededRng(seed));
 }
 
 for (let floor = 1; floor <= 4; floor++) {
@@ -92,6 +99,27 @@ const result7F = makeSystem(123).selectEncounter({
 assert.strictEqual(result7F.encounter.monsterKey, "bat", "monster and floor should be data-driven");
 assert.strictEqual(result7F.encounter.rank, "strong");
 
+const oversizedRoomTable = [
+  {
+    id: "needs-large-room",
+    minFloor: 5,
+    maxFloor: 5,
+    chance: 100,
+    minRoomW: 8,
+    minRoomH: 6,
+    entries: [{ monster: "miniDevil", rank: "strong", weight: 100 }],
+  },
+];
+const noLargeRoom = makeSystem(123).selectEncounter({
+  tables: oversizedRoomTable,
+  floor: 5,
+  rooms,
+  startRoom: rooms[0],
+  stairRoom: rooms[3],
+  nextId: 1,
+});
+assert.strictEqual(noLargeRoom.encounter, null, "minimum room size should be controlled by encounter data");
+
 const blockedCenter = makeSystem(123).findPlacement(result5F.encounter, (x, y) => {
   return x === result5F.encounter.room.cx && y === result5F.encounter.room.cy;
 });
@@ -111,14 +139,10 @@ for (let seed = 1; seed <= 200; seed++) {
     cols: 40,
     rows: 30,
     rng: layoutRng,
-    clamp: (value, min, max) => Math.max(min, Math.min(max, value)),
+    clamp,
   });
   const layout = layoutBuilder.buildFloorLayout();
-  const system = context.window.GORO_DUNGEON_SPECIAL_ENCOUNTERS.createSystem({
-    rng: layoutRng,
-    isSameRoom,
-    roomsOverlap,
-  });
+  const system = createSpecialEncounterSystem(layoutRng);
   const generated = system.selectEncounter({
     tables,
     floor: 5,

@@ -1,7 +1,7 @@
 (function () {
   function messageKeys(kind, rank) {
-    if (kind === "encounter" && rank === "strong") return ["strongEncounter", "encounter"];
-    return [kind];
+    if (kind === "encounter" && rank === "strong") return [["strongEncounter"], ["encounter"]];
+    return [[kind]];
   }
 
   function formatMessage(message, name) {
@@ -11,13 +11,15 @@
 
   function resolveMessage({ encounter, monster, rankProfile, kind, name }) {
     const sources = [encounter?.messages, monster?.messages, rankProfile?.messages];
-    const keys = messageKeys(kind, encounter?.rank || "normal");
+    const keyGroups = messageKeys(kind, encounter?.rank || "normal");
 
-    for (const source of sources) {
-      if (!source) continue;
-      for (const key of keys) {
-        const resolved = formatMessage(source[key], name || monster?.name);
-        if (resolved) return resolved;
+    for (const keys of keyGroups) {
+      for (const source of sources) {
+        if (!source) continue;
+        for (const key of keys) {
+          const resolved = formatMessage(source[key], name || monster?.name);
+          if (resolved) return resolved;
+        }
       }
     }
 
@@ -29,37 +31,18 @@
 
   function createSystem(options) {
     const rng = options.rng;
-    const isSameRoom = options.isSameRoom;
-    const roomsOverlap = options.roomsOverlap;
-
-    function weightedPick(entries) {
-      const candidates = (entries || []).filter((entry) => entry && entry.weight > 0);
-      if (candidates.length === 0) return null;
-      const total = candidates.reduce((sum, entry) => sum + entry.weight, 0);
-      let roll = rng(1, total);
-      for (const entry of candidates) {
-        roll -= entry.weight;
-        if (roll <= 0) return entry;
-      }
-      return candidates[0];
-    }
-
-    function tableForFloor(tables, floor) {
-      return (tables || []).find((table) => floor >= table.minFloor && floor <= table.maxFloor) || null;
-    }
+    const weightedPickEntry = options.weightedPickEntry;
+    const findTableForFloor = options.findTableForFloor;
+    const isRoomEligible = options.isRoomEligible;
 
     function selectEncounter({ tables, floor, rooms, startRoom, stairRoom, nextId }) {
-      const table = tableForFloor(tables, floor);
+      const table = findTableForFloor(tables, floor);
       if (!table || rng(1, 100) > table.chance) {
         return { encounter: null, eventRoom: null, nextId };
       }
 
-      const candidates = rooms.filter((room) => {
-        if (isSameRoom(room, startRoom) || isSameRoom(room, stairRoom)) return false;
-        if (roomsOverlap(room, startRoom) || roomsOverlap(room, stairRoom)) return false;
-        return room.w >= 5 && room.h >= 4;
-      });
-      const entry = weightedPick(table.entries);
+      const candidates = rooms.filter((room) => isRoomEligible(room, { startRoom, stairRoom, table }));
+      const entry = weightedPickEntry(table.entries);
       if (!entry || candidates.length === 0) {
         return { encounter: null, eventRoom: null, nextId };
       }
@@ -114,7 +97,6 @@
     }
 
     return {
-      tableForFloor,
       selectEncounter,
       findPlacement,
       resolveMessage,

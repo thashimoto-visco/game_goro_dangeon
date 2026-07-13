@@ -2,6 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { clamp, createSeededRng } = require("./test-helpers");
 
 const root = path.resolve(__dirname, "..");
 
@@ -26,18 +27,6 @@ function loadDungeonModules() {
   }
 
   return context.window;
-}
-
-function createSeededRng(seed) {
-  let state = seed >>> 0;
-  return function rng(min, max) {
-    state = (state * 1664525 + 1013904223) >>> 0;
-    return min + (state % (max - min + 1));
-  };
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
 }
 
 function tileKey(x, y) {
