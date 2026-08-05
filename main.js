@@ -39,6 +39,17 @@ const monsterSystem = window.GORO_DUNGEON_MONSTERS.createSystem(window.GORO_DUNG
 const monsterCatalog = monsterSystem.catalog;
 const monsterTypes = monsterSystem.types;
 
+if (!window.GORO_DUNGEON_SPECIAL_ENCOUNTERS || !window.GORO_DUNGEON_ENCOUNTER_DATA) {
+  throw new Error("必要な特殊遭遇システムを読み込めません。");
+}
+const encounterData = window.GORO_DUNGEON_ENCOUNTER_DATA;
+const specialEncounterSystem = window.GORO_DUNGEON_SPECIAL_ENCOUNTERS.createSystem({
+  rng,
+  weightedPickEntry,
+  findTableForFloor: (tables, floor) => tableForFloor(tables, floor, { fallbackToLast: false }),
+  isRoomEligible: specialEncounterRoomIsEligible,
+});
+
 function resolveAssetUrl(path) {
   if (/^(?:https?:|data:|blob:|file:)/.test(path)) return path;
   const baseUrl = appConfig.assetBaseUrl || document.baseURI;
@@ -140,7 +151,15 @@ const runtime = {
   hitStop: 0,
 };
 
+const debugParams = new URLSearchParams(window.location.search);
+const debugHostAllowed =
+  window.location.protocol === "file:" || ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+const debugStartFloor = Number.parseInt(debugParams.get("floor"), 10);
 const debug = {
+  enabled: debugHostAllowed && debugParams.get("debug") === "1",
+  startFloor: Number.isInteger(debugStartFloor) && debugStartFloor >= 1 && debugStartFloor <= 99 ? debugStartFloor : null,
+  encounterStart: debugParams.get("encounter") === "1",
+  loadout: debugParams.get("loadout") === "1",
   structureOverlay: false,
 };
 
@@ -314,6 +333,24 @@ const eventRoomTypes = {
       startFlash("rgba(45,212,191,0.14)", 140);
     },
   },
+  stronghold: {
+    roomColor(eventRoom) {
+      const encounter = specialEncounterById(eventRoom.encounterId);
+      return encounter?.rank === "strong" ? "rgba(147, 51, 234, 0.14)" : "rgba(255, 255, 255, 0.08)";
+    },
+    onDiscover(eventRoom) {
+      const encounter = specialEncounterById(eventRoom.encounterId);
+      const message = resolveSpecialEncounterMessage(encounter, "roomPresence");
+      if (message) addLog(message);
+      if (encounter?.rank === "strong") {
+        playSound("strongPresence");
+        startFlash("rgba(147,51,234,0.18)", 170);
+      } else {
+        playSound("roomEnter");
+      }
+      stopDash();
+    },
+  },
 };
 
 const eventObjectTypes = {
@@ -427,6 +464,7 @@ const state = {
   items: [],
   eventRooms: [],
   eventObjects: [],
+  specialEncounter: null,
   stairs: { x: 0, y: 0 },
   action: null,
   gameOver: {
@@ -438,6 +476,7 @@ const state = {
   stats: {
     turns: 0,
     defeated: 0,
+    strongDefeated: 0,
   },
   menu: {
     type: null,
@@ -571,20 +610,29 @@ function recoveryGainForHunger(hunger) {
   return 0;
 }
 
-function tableForFloor(tables, floor) {
-  return tables.find((table) => floor >= table.minFloor && floor <= table.maxFloor) || tables[tables.length - 1];
+function tableForFloor(tables, floor, options = {}) {
+  const match = (tables || []).find((table) => floor >= table.minFloor && floor <= table.maxFloor);
+  if (match) return match;
+  return options.fallbackToLast === false ? null : tables?.[tables.length - 1] || null;
 }
 
 function weightedPick(entries) {
-  const total = entries.reduce((sum, entry) => sum + entry.weight, 0);
+  const entry = weightedPickEntry(entries);
+  return entry ? entry.type : null;
+}
+
+function weightedPickEntry(entries) {
+  const candidates = (entries || []).filter((entry) => entry && entry.weight > 0);
+  if (candidates.length === 0) return (entries || []).find(Boolean) || null;
+  const total = candidates.reduce((sum, entry) => sum + entry.weight, 0);
   let roll = rng(1, total);
 
-  for (const entry of entries) {
+  for (const entry of candidates) {
     roll -= entry.weight;
-    if (roll <= 0) return entry.type;
+    if (roll <= 0) return entry;
   }
 
-  return entries[0].type;
+  return candidates[0];
 }
 
 function monsterTypeByKey(key) {
@@ -797,6 +845,23 @@ function playSound(name) {
     playTone(988, 0.07, "square", 0.09, 0.05);
     return;
   }
+  if (name === "strongPresence") {
+    playTone(98, 0.11, "sawtooth", 0.08);
+    playTone(73, 0.16, "triangle", 0.07, 0.1);
+    return;
+  }
+  if (name === "strongEncounter") {
+    playTone(147, 0.09, "sawtooth", 0.1);
+    playTone(110, 0.12, "square", 0.09, 0.07);
+    playTone(196, 0.14, "triangle", 0.08, 0.16);
+    return;
+  }
+  if (name === "strongDefeat") {
+    playTone(220, 0.08, "sawtooth", 0.09);
+    playTone(330, 0.09, "triangle", 0.09, 0.07);
+    playTone(494, 0.14, "square", 0.08, 0.15);
+    return;
+  }
   if (name === "moveCorridor") {
     playTone(102, 0.035, "square", 0.05);
     return;
@@ -971,9 +1036,10 @@ function addFloatingText(text, x, y, color = "#ffffff") {
   });
 }
 
-function addAlertEffect(x, y) {
+function addAlertEffect(x, y, variant = "normal") {
   effects.push({
     type: "alert",
+    variant,
     x,
     y,
     age: 0,
@@ -984,21 +1050,35 @@ function addAlertEffect(x, y) {
 function updateEnemyEncounters() {
   if (state.gameOver.active) return;
 
-  let encountered = false;
+  let normalEncountered = false;
+  let strongEncountered = false;
   for (const enemy of state.enemies) {
     if (enemy.hp <= 0) continue;
     const visible = isVisibleTile(enemy.x, enemy.y);
     if (visible && !enemy.spotted) {
       enemy.spotted = true;
-      addAlertEffect(enemy.x, enemy.y);
-      addLog(`${enemy.name}が現れた！`);
-      encountered = true;
+      if (!enemy.encounterAnnounced) {
+        enemy.encounterAnnounced = true;
+        const strong = enemy.encounterRank === "strong";
+        addAlertEffect(enemy.x, enemy.y, strong ? "strong" : "normal");
+        addLog(resolveEnemyEncounterMessage(enemy));
+        if (strong) {
+          strongEncountered = true;
+          startFlash("rgba(190,24,93,0.2)", 190);
+          startCameraShake(170, 3);
+          stopDash();
+        } else {
+          normalEncountered = true;
+        }
+      }
     } else if (!visible && enemy.spotted) {
       enemy.spotted = false;
     }
   }
 
-  if (encountered) {
+  if (strongEncountered) {
+    playSound("strongEncounter");
+  } else if (normalEncountered) {
     playSound("encounter");
   }
 }
@@ -1226,8 +1306,17 @@ function inBounds(x, y) {
   return x >= 0 && y >= 0 && x < COLS && y < ROWS;
 }
 
-function createEnemy(type, x, y) {
-  return monsterSystem.createEnemy(type, x, y, state.floor);
+function encounterRankProfile(rank) {
+  return encounterData.rankProfiles[rank] || encounterData.rankProfiles.normal;
+}
+
+function createEnemy(type, x, y, options = {}) {
+  const rank = options.encounterRank || "normal";
+  return monsterSystem.createEnemy(type, x, y, state.floor, {
+    ...options,
+    encounterRank: rank,
+    rankProfile: encounterRankProfile(rank),
+  });
 }
 
 function isSameRoom(a, b) {
@@ -1237,6 +1326,12 @@ function isSameRoom(a, b) {
 function roomsOverlap(a, b) {
   if (!a || !b) return false;
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function specialEncounterRoomIsEligible(room, { startRoom, stairRoom, table }) {
+  if (isSameRoom(room, startRoom) || isSameRoom(room, stairRoom)) return false;
+  if (roomsOverlap(room, startRoom) || roomsOverlap(room, stairRoom)) return false;
+  return room.w >= (table.minRoomW || 1) && room.h >= (table.minRoomH || 1);
 }
 
 function roomContains(room, x, y) {
@@ -1328,6 +1423,37 @@ function eventObjectAt(x, y) {
   return state.eventObjects.find((object) => object.x === x && object.y === y);
 }
 
+function specialEncounterById(encounterId) {
+  if (!encounterId || state.specialEncounter?.id !== encounterId) return null;
+  return state.specialEncounter;
+}
+
+function resolveSpecialEncounterMessage(encounter, kind) {
+  if (!encounter) return "";
+  const monster = monsterSystem.definitionByKey(encounter.monsterKey);
+  return specialEncounterSystem.resolveMessage({
+    encounter,
+    monster,
+    rankProfile: encounterRankProfile(encounter.rank),
+    kind,
+    name: monster.name,
+  });
+}
+
+function resolveEnemyEncounterMessage(enemy) {
+  const monster = monsterSystem.definitionByKey(enemy.sprite);
+  return specialEncounterSystem.resolveMessage({
+    encounter: {
+      rank: enemy.encounterRank,
+      messages: enemy.encounterMessages,
+    },
+    monster,
+    rankProfile: encounterRankProfile(enemy.encounterRank),
+    kind: "encounter",
+    name: enemy.name,
+  });
+}
+
 function eventTableForCurrentFloor() {
   return tableForFloor(floorEventTables, state.floor);
 }
@@ -1346,6 +1472,26 @@ function treasureRewardTableForCurrentFloor() {
 
 function selectEventRooms(rooms, startRoom, stairRoom) {
   state.eventObjects = [];
+  state.specialEncounter = null;
+  const specialResult = specialEncounterSystem.selectEncounter({
+    tables: encounterData.specialEncounterTables,
+    floor: state.floor,
+    rooms,
+    startRoom,
+    stairRoom,
+    nextId: nextEventId,
+  });
+  if (specialResult.encounter) {
+    state.specialEncounter = specialResult.encounter;
+    state.eventRooms = [specialResult.eventRoom];
+    nextEventId = specialResult.nextId;
+    return;
+  }
+
+  selectNormalEventRooms(rooms, startRoom, stairRoom);
+}
+
+function selectNormalEventRooms(rooms, startRoom, stairRoom) {
   const result = dungeonEvents.selectRooms({
     rooms,
     startRoom,
@@ -1361,6 +1507,7 @@ function eventObjectPlacementBlocked(x, y) {
   if (!isWalkable(x, y)) return true;
   if (state.player.x === x && state.player.y === y) return true;
   if (state.stairs.x === x && state.stairs.y === y) return true;
+  if (enemyAt(x, y) || itemAt(x, y)) return true;
   return Boolean(eventObjectAt(x, y));
 }
 
@@ -1408,9 +1555,15 @@ function generateFloor() {
   selectEventRooms(layout.rooms, start, stairRoom);
   placeEventObjects();
   placeEnemies(layout.rooms);
+  placeSpecialEncounterEnemy();
+  positionDebugPlayerNearSpecialEncounter();
   placeItems(layout.rooms);
   placeEventRewards();
   computeVisibleTiles();
+  announceSpecialEncounterPresence();
+  if (debug.enabled && debug.encounterStart) {
+    handleEventRoomDiscoveryAtPlayer();
+  }
 }
 
 function isWalkable(x, y) {
@@ -1453,7 +1606,10 @@ function playerAttackPower() {
 function placeEnemies(rooms) {
   state.enemies = [];
   const table = tableForFloor(floorEnemyTables, state.floor);
-  const candidates = rooms.slice(1);
+  if (!table?.entries?.length) return;
+  const candidates = rooms
+    .slice(1)
+    .filter((room) => !state.specialEncounter || !isSameRoom(room, state.specialEncounter.room));
   const count = rng(table.count[0], table.count[1]);
   let attempts = 0;
 
@@ -1464,14 +1620,82 @@ function placeEnemies(rooms) {
     const y = rng(room.y, room.y + room.h - 1);
 
     if (isEnemyPlacementBlocked(x, y)) continue;
-    const type = monsterTypeByKey(weightedPick(table.entries));
-    state.enemies.push(createEnemy(type, x, y));
+    const entry = weightedPickEntry(table.entries);
+    if (!entry?.type) break;
+    const type = monsterTypeByKey(entry.type);
+    state.enemies.push(createEnemy(type, x, y, { encounterRank: entry.rank || "normal" }));
   }
+}
+
+function placeSpecialEncounterEnemy() {
+  const encounter = state.specialEncounter;
+  if (!encounter) return;
+  const position = specialEncounterSystem.findPlacement(encounter, isEnemyPlacementBlocked);
+  if (!position) {
+    state.eventRooms = state.eventRooms.filter((room) => room.encounterId !== encounter.id);
+    state.specialEncounter = null;
+    state.eventObjects = [];
+    selectNormalEventRooms(state.rooms, state.rooms[0], state.rooms[state.rooms.length - 1]);
+    placeEventObjects();
+    return;
+  }
+
+  const type = monsterTypeByKey(encounter.monsterKey);
+  state.enemies.push(
+    createEnemy(type, position.x, position.y, {
+      encounterRank: encounter.rank,
+      encounterId: encounter.id,
+      encounterMessages: encounter.messages,
+      rewardProfile: encounter.rewardProfile,
+    })
+  );
+}
+
+function positionDebugPlayerNearSpecialEncounter() {
+  if (!debug.enabled || !debug.encounterStart) return;
+  applyDebugEncounterLoadout();
+  const enemy = state.enemies.find((candidate) => candidate.encounterId === state.specialEncounter?.id);
+  if (!enemy) return;
+  const positions = [
+    { x: enemy.x - 2, y: enemy.y },
+    { x: enemy.x + 2, y: enemy.y },
+    { x: enemy.x, y: enemy.y - 2 },
+    { x: enemy.x, y: enemy.y + 2 },
+  ];
+  const position = positions.find(
+    (candidate) => isWalkable(candidate.x, candidate.y) && !enemyAt(candidate.x, candidate.y)
+  );
+  if (!position) return;
+  state.player.x = position.x;
+  state.player.y = position.y;
+  updateCameraTarget();
+}
+
+function applyDebugEncounterLoadout() {
+  if (!debug.loadout) return;
+  const level = levelEntry(3);
+  state.player.level = level.level;
+  state.player.maxHp = level.maxHp;
+  state.player.hp = level.maxHp;
+  state.player.atk = level.atk;
+  state.player.def = level.def;
+  const weapon = { id: nextItemId, type: "ironSword" };
+  nextItemId += 1;
+  state.player.inventory = [weapon];
+  state.player.weapon = weapon.id;
+}
+
+function announceSpecialEncounterPresence() {
+  const encounter = state.specialEncounter;
+  if (!encounter) return;
+  const message = resolveSpecialEncounterMessage(encounter, "floorPresence");
+  if (message) addLog(message);
+  if (encounter.rank === "strong") playSound("strongPresence");
 }
 
 function randomItemType() {
   const table = tableForFloor(floorItemTables, state.floor);
-  return weightedPick(table.entries);
+  return table?.entries?.length ? weightedPick(table.entries) : null;
 }
 
 function isItemPlacementBlocked(x, y) {
@@ -1486,7 +1710,10 @@ function isItemPlacementBlocked(x, y) {
 function placeItems(rooms) {
   state.items = [];
   const table = tableForFloor(floorItemTables, state.floor);
-  const candidates = rooms.slice(1);
+  if (!table?.entries?.length || !Array.isArray(table.count)) return;
+  const candidates = rooms
+    .slice(1)
+    .filter((room) => !state.specialEncounter || !isSameRoom(room, state.specialEncounter.room));
   const count = rng(table.count[0], table.count[1]);
   let attempts = 0;
 
@@ -1497,9 +1724,11 @@ function placeItems(rooms) {
     const y = rng(room.y, room.y + room.h - 1);
 
     if (isItemPlacementBlocked(x, y)) continue;
+    const type = randomItemType();
+    if (!type || !itemTypes[type]) break;
     state.items.push({
       id: nextItemId,
-      type: randomItemType(),
+      type,
       x,
       y,
     });
@@ -1509,6 +1738,7 @@ function placeItems(rooms) {
 
 function placeTreasureRoomRewards(eventRoom) {
   const table = treasureRewardTableForCurrentFloor();
+  if (!table?.entries?.length || !Array.isArray(table.count)) return;
   const count = rng(table.count[0], table.count[1]);
   let placed = 0;
   let attempts = 0;
@@ -1519,9 +1749,11 @@ function placeTreasureRoomRewards(eventRoom) {
     const y = rng(eventRoom.room.y, eventRoom.room.y + eventRoom.room.h - 1);
 
     if (isItemPlacementBlocked(x, y)) continue;
+    const type = weightedPick(table.entries);
+    if (!type || !itemTypes[type]) break;
     state.items.push({
       id: nextItemId,
-      type: weightedPick(table.entries),
+      type,
       x,
       y,
     });
@@ -1537,6 +1769,64 @@ function placeEventRewards() {
       definition.placeRewards(eventRoom);
     }
   }
+}
+
+function rewardPlacementPositions(x, y) {
+  const positions = [{ x, y }];
+  for (let radius = 1; radius <= 2; radius++) {
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+        positions.push({ x: x + dx, y: y + dy });
+      }
+    }
+  }
+  return positions;
+}
+
+function placeEnemyGuaranteedReward(enemy) {
+  if (!enemy.rewardProfile) return null;
+  const profile = encounterData.rewardProfiles[enemy.rewardProfile];
+  if (!profile?.entries?.length) return null;
+  const position = rewardPlacementPositions(enemy.x, enemy.y).find(
+    (candidate) => !isItemPlacementBlocked(candidate.x, candidate.y)
+  );
+  if (!position) {
+    addLog("強敵の落とし物を置ける場所がなかった。");
+    return null;
+  }
+  const type = weightedPick(profile.entries);
+  if (!type || !itemTypes[type]) return null;
+  const item = { id: nextItemId, type, x: position.x, y: position.y };
+  nextItemId += 1;
+  state.items.push(item);
+  addLog(`${itemTypes[type].name}を落とした！`);
+  return item;
+}
+
+function handleEnemyDefeat(enemy) {
+  state.stats.defeated += 1;
+  const strong = enemy.countsAsStrongDefeat;
+  if (strong) {
+    state.stats.strongDefeated += 1;
+    playSound("strongDefeat");
+    addDefeatEffect(enemy.x, enemy.y);
+    addFloatingText("強敵撃破", enemy.x, enemy.y, "#fde047");
+    addLog(`強敵の${enemy.name}をたおした！`);
+    startHitStop(170);
+    startCameraShake(220, 5);
+    startFlash("rgba(250,204,21,0.2)", 210);
+    placeEnemyGuaranteedReward(enemy);
+    if (state.specialEncounter?.id === enemy.encounterId) {
+      state.specialEncounter.completed = true;
+    }
+  } else {
+    playSound("defeat");
+    addDefeatEffect(enemy.x, enemy.y);
+    addFloatingText("撃破", enemy.x, enemy.y, "#fca5a5");
+    addLog(`${enemy.name}をたおした！`);
+  }
+  gainExp(enemy.exp);
 }
 
 function buildPlayerAttackResult(enemy) {
@@ -1601,12 +1891,7 @@ function applyPlayerAttackHit(action) {
   addLog(`${enemy.name}に${action.result.damage}ダメージ。`);
 
   if (enemy.hp <= 0) {
-    state.stats.defeated += 1;
-    playSound("defeat");
-    addDefeatEffect(enemy.x, enemy.y);
-    addFloatingText("撃破", enemy.x, enemy.y, "#fca5a5");
-    addLog(`${enemy.name}をたおした！`);
-    gainExp(enemy.exp);
+    handleEnemyDefeat(enemy);
   }
 }
 
@@ -1664,6 +1949,8 @@ function moveEnemies(options = {}) {
     const dy = Math.sign(state.player.y - e.y);
     const nx = e.x + (Math.random() < 0.5 ? dx : 0);
     const ny = e.y + (Math.random() < 0.5 ? dy : 0);
+    const specialEncounter = specialEncounterById(e.encounterId);
+    if (specialEncounter && !specialEncounterSystem.containsPosition(specialEncounter, nx, ny)) continue;
 
     if (state.player.x === nx && state.player.y === ny) {
       const enemyDmg = Math.max(1, e.atk - state.player.def + rng(0, 1));
@@ -1829,12 +2116,14 @@ function resetPlayerRunState() {
   state.items = [];
   state.eventRooms = [];
   state.eventObjects = [];
+  state.specialEncounter = null;
   state.action = null;
   state.gameOver.active = false;
   state.gameOver.age = 0;
   state.gameOver.reason = "";
   state.stats.turns = 0;
   state.stats.defeated = 0;
+  state.stats.strongDefeated = 0;
   const initialLevel = levelEntry(1);
   state.player.level = initialLevel.level;
   state.player.maxHp = initialLevel.maxHp;
@@ -2082,12 +2371,75 @@ function drawBlockMonsterShape(px, py, draw, shape) {
   ctx.fill();
 }
 
+function drawImpMonsterShape(px, py, draw, shape) {
+  const centerX = px + draw.w / 2;
+  const top = py + draw.h * 0.12;
+  ctx.fillStyle = shape.shade || "#4c1d95";
+
+  // Wings behind a compact two-legged body, matching the dedicated sprite silhouette.
+  ctx.beginPath();
+  ctx.moveTo(centerX - 9, py + 29);
+  ctx.lineTo(centerX - 28, py + 19);
+  ctx.lineTo(centerX - 23, py + 31);
+  ctx.lineTo(centerX - 30, py + 37);
+  ctx.lineTo(centerX - 10, py + 42);
+  ctx.moveTo(centerX + 9, py + 29);
+  ctx.lineTo(centerX + 28, py + 19);
+  ctx.lineTo(centerX + 23, py + 31);
+  ctx.lineTo(centerX + 30, py + 37);
+  ctx.lineTo(centerX + 10, py + 42);
+  ctx.fill();
+
+  ctx.fillStyle = shape.accent || "#c7354b";
+  ctx.beginPath();
+  ctx.moveTo(centerX - 7, top + 6);
+  ctx.lineTo(centerX - 16, top - 7);
+  ctx.lineTo(centerX - 12, top + 9);
+  ctx.moveTo(centerX + 7, top + 6);
+  ctx.lineTo(centerX + 16, top - 7);
+  ctx.lineTo(centerX + 12, top + 9);
+  ctx.fill();
+
+  ctx.fillStyle = shape.fill || "#7c3aed";
+  ctx.beginPath();
+  ctx.ellipse(centerX, py + 22, 13, 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = shape.accent || "#c7354b";
+  ctx.beginPath();
+  ctx.moveTo(centerX - 9, py + 35);
+  ctx.lineTo(centerX + 9, py + 35);
+  ctx.lineTo(centerX + 13, py + 54);
+  ctx.lineTo(centerX - 13, py + 54);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = shape.fill || "#e96b67";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(centerX - 9, py + 39);
+  ctx.lineTo(centerX - 18, py + 47);
+  ctx.moveTo(centerX + 9, py + 39);
+  ctx.lineTo(centerX + 18, py + 47);
+  ctx.stroke();
+
+  ctx.fillStyle = shape.eye || "#fef3c7";
+  ctx.fillRect(centerX - 9, py + 20, 6, 4);
+  ctx.fillRect(centerX + 3, py + 20, 6, 4);
+  ctx.strokeStyle = shape.accent || "#f59e0b";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(centerX + 13, py + 49, 12, -1.15, 1.05);
+  ctx.stroke();
+}
+
 function drawMonsterShape(enemy, px, py, draw = monsterSystem.defaults.draw) {
   const shape = monsterSystem.definitionByKey(enemy.sprite).fallbackShape;
   const shapeRenderers = {
     blob: drawBlobMonsterShape,
     winged: drawWingedMonsterShape,
     block: drawBlockMonsterShape,
+    imp: drawImpMonsterShape,
   };
   const renderer = shapeRenderers[shape.kind] || drawBlockMonsterShape;
   renderer(px, py, draw, shape);
@@ -2438,15 +2790,16 @@ function drawDebugStructureOverlay() {
   );
 }
 
-function eventRoomColor(type) {
-  const definition = eventRoomType(type);
-  return definition && definition.roomColor ? definition.roomColor : "rgba(255, 255, 255, 0.08)";
+function eventRoomColor(eventRoom) {
+  const definition = eventRoomType(eventRoom.type);
+  if (!definition?.roomColor) return "rgba(255, 255, 255, 0.08)";
+  return typeof definition.roomColor === "function" ? definition.roomColor(eventRoom) : definition.roomColor;
 }
 
 function drawEventRoomLayer() {
   for (const eventRoom of state.eventRooms) {
     ctx.save();
-    ctx.fillStyle = eventRoomColor(eventRoom.type);
+    ctx.fillStyle = eventRoomColor(eventRoom);
     for (let y = eventRoom.room.y; y < eventRoom.room.y + eventRoom.room.h; y++) {
       for (let x = eventRoom.room.x; x < eventRoom.room.x + eventRoom.room.w; x++) {
         if (!isWalkable(x, y)) continue;
@@ -2704,10 +3057,29 @@ function drawEnemyHpBar(enemy, position, draw) {
   const y = position.y - 7;
 
   ctx.save();
-  ctx.fillStyle = "rgba(3, 7, 18, 0.72)";
+  ctx.fillStyle = enemy.encounterRank === "strong" ? "rgba(88, 28, 135, 0.9)" : "rgba(3, 7, 18, 0.72)";
   ctx.fillRect(x - 1, y - 1, barWidth + 2, barHeight + 2);
   ctx.fillStyle = ratio > 0.5 ? "#4ade80" : ratio > 0.25 ? "#facc15" : "#f87171";
   ctx.fillRect(x, y, barWidth * ratio, barHeight);
+  ctx.restore();
+}
+
+function drawStrongEnemyAura(position, draw) {
+  const pulse = (Math.sin(runtime.elapsed / 170) + 1) / 2;
+  const centerX = position.x + draw.w / 2;
+  const footY = position.y + draw.h;
+  ctx.save();
+  ctx.globalAlpha = 0.2 + pulse * 0.12;
+  ctx.strokeStyle = "#e879f9";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(centerX, footY - 3, 18 + pulse * 4, 7 + pulse * 2, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 0.08 + pulse * 0.06;
+  ctx.fillStyle = "#c026d3";
+  ctx.beginPath();
+  ctx.ellipse(centerX, position.y + draw.h * 0.55, draw.w * 0.43, draw.h * 0.5, 0, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -2718,6 +3090,9 @@ function drawEnemyActor(enemy) {
   const position = actorDrawPosition(enemy, draw);
   const sprite = sprites.monsters[enemy.sprite];
   ctx.save();
+  if (enemy.encounterRank === "strong") {
+    drawStrongEnemyAura(position, draw);
+  }
   drawEnemySpriteWithIdle(enemy, sprite, position, draw, motion);
   ctx.restore();
   drawEnemyHpBar(enemy, position, draw);
@@ -2796,14 +3171,16 @@ function drawAlertEffect(effect) {
   ctx.globalAlpha = alpha;
   ctx.translate(x, y);
   ctx.scale(pop, pop);
-  ctx.font = "bold 17px 'Yu Gothic UI', sans-serif";
+  const strong = effect.variant === "strong";
+  const text = strong ? "!!" : "！";
+  ctx.font = `bold ${strong ? 18 : 17}px 'Yu Gothic UI', sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineWidth = 4;
   ctx.strokeStyle = "rgba(15, 23, 42, 0.9)";
-  ctx.strokeText("！", 0, 0);
-  ctx.fillStyle = "#fde047";
-  ctx.fillText("！", 0, 0);
+  ctx.strokeText(text, 0, 0);
+  ctx.fillStyle = strong ? "#f0abfc" : "#fde047";
+  ctx.fillText(text, 0, 0);
   ctx.restore();
 }
 
@@ -3152,7 +3529,7 @@ function drawGameOverLayer() {
   const fade = clamp(progress * 1.4, 0, 0.78);
   const panelAlpha = clamp((progress - 0.25) / 0.55, 0, 1);
   const panelWidth = 420;
-  const panelHeight = 312;
+  const panelHeight = 336;
   const panelX = Math.round((canvas.width - panelWidth) / 2);
   const panelY = Math.round((canvas.height - panelHeight) / 2);
   const reasonLines = splitTextByLength(state.gameOver.reason || defeatReasons.fallbackEnemy, 15);
@@ -3192,6 +3569,7 @@ function drawGameOverLayer() {
       `到達階層: ${state.floor}F`,
       `レベル: ${state.player.level}`,
       `撃破数: ${state.stats.defeated}`,
+      `強敵撃破数: ${state.stats.strongDefeated}`,
       `経験値: ${state.player.exp}`,
       `経過ターン: ${state.stats.turns}`,
       `装備: ${currentWeaponName()}`,
@@ -3361,6 +3739,37 @@ if (ui.soundToggle) {
   setSoundMuted(true);
 }
 
+if (debug.enabled) {
+  if (debug.startFloor !== null) state.floor = debug.startFloor;
+  window.GORO_DUNGEON_DEBUG_SNAPSHOT = () => ({
+    floor: state.floor,
+    map: state.map.map((row) => row.slice()),
+    player: { x: state.player.x, y: state.player.y, hp: state.player.hp, maxHp: state.player.maxHp },
+    stairs: { ...state.stairs },
+    enemies: state.enemies.map((enemy) => ({
+      x: enemy.x,
+      y: enemy.y,
+      hp: enemy.hp,
+      maxHp: enemy.maxHp,
+      atk: enemy.atk,
+      exp: enemy.exp,
+      name: enemy.name,
+      sprite: enemy.sprite,
+      encounterRank: enemy.encounterRank,
+      rewardProfile: enemy.rewardProfile,
+    })),
+    specialEncounter: state.specialEncounter
+      ? {
+          id: state.specialEncounter.id,
+          monsterKey: state.specialEncounter.monsterKey,
+          rank: state.specialEncounter.rank,
+          room: { ...state.specialEncounter.room },
+          completed: Boolean(state.specialEncounter.completed),
+        }
+      : null,
+    stats: { ...state.stats },
+  });
+}
 generateFloor();
 addLog("ダンジョンに入った。階段を目指そう。青いマスが階段だ。");
 requestAnimationFrame(loop);

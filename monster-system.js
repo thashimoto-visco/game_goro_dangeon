@@ -104,18 +104,25 @@
       );
     }
 
-    function createEnemy(type, x, y, floor) {
+    function createEnemy(type, x, y, floor, options = {}) {
       const floorBonus = Math.max(0, floor - 1);
-      const hp = Math.round(type.baseHp + floorBonus * type.hpScale);
+      const rankProfile = options.rankProfile || {};
+      const multiplier = rankProfile.statMultiplier || {};
+      const hp = Math.max(1, Math.round((type.baseHp + floorBonus * type.hpScale) * (multiplier.hp || 1)));
       return {
         x,
         y,
         hp,
         maxHp: hp,
-        atk: Math.round(type.baseAtk + floorBonus * type.atkScale),
-        exp: type.exp,
+        atk: Math.max(1, Math.round((type.baseAtk + floorBonus * type.atkScale) * (multiplier.atk || 1))),
+        exp: Math.max(1, Math.round(type.exp * (multiplier.exp || 1))),
         name: type.name,
         sprite: type.key,
+        encounterRank: options.encounterRank || "normal",
+        encounterId: options.encounterId || null,
+        encounterMessages: { ...(options.encounterMessages || {}) },
+        rewardProfile: options.rewardProfile || rankProfile.guaranteedReward || null,
+        countsAsStrongDefeat: Boolean(rankProfile.countsAsStrongDefeat),
       };
     }
 
