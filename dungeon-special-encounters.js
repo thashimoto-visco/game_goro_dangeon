@@ -96,9 +96,16 @@
       return placementPositions(encounter.room).find((position) => !isBlocked(position.x, position.y)) || null;
     }
 
+    function containsPosition(encounter, x, y) {
+      const room = encounter?.room;
+      if (!room) return false;
+      return x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h;
+    }
+
     return {
       selectEncounter,
       findPlacement,
+      containsPosition,
       resolveMessage,
     };
   }

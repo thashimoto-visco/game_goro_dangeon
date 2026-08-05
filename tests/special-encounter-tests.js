@@ -129,6 +129,17 @@ assert.notStrictEqual(
   `${result5F.encounter.room.cx},${result5F.encounter.room.cy}`
 );
 
+assert.strictEqual(
+  makeSystem(123).containsPosition(result5F.encounter, result5F.encounter.room.x, result5F.encounter.room.y),
+  true,
+  "special encounter enemy should be allowed inside its assigned room"
+);
+assert.strictEqual(
+  makeSystem(123).containsPosition(result5F.encounter, result5F.encounter.room.x - 1, result5F.encounter.room.y),
+  false,
+  "special encounter enemy should not leave its assigned room"
+);
+
 const noPosition = makeSystem(123).findPlacement(result5F.encounter, () => true);
 assert.strictEqual(noPosition, null, "fully blocked rooms should fail safely");
 

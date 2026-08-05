@@ -165,10 +165,10 @@
       },
       fallbackShape: {
         kind: "imp",
-        fill: "#7c3aed",
-        shade: "#4c1d95",
-        accent: "#f59e0b",
-        eye: "#fef3c7",
+        fill: "#e96b67",
+        shade: "#30203d",
+        accent: "#c7354b",
+        eye: "#ffe5b4",
       },
       burst: {
         kind: "particles",

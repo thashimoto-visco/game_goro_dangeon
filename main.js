@@ -1949,6 +1949,8 @@ function moveEnemies(options = {}) {
     const dy = Math.sign(state.player.y - e.y);
     const nx = e.x + (Math.random() < 0.5 ? dx : 0);
     const ny = e.y + (Math.random() < 0.5 ? dy : 0);
+    const specialEncounter = specialEncounterById(e.encounterId);
+    if (specialEncounter && !specialEncounterSystem.containsPosition(specialEncounter, nx, ny)) continue;
 
     if (state.player.x === nx && state.player.y === ny) {
       const enemyDmg = Math.max(1, e.atk - state.player.def + rng(0, 1));
@@ -2371,38 +2373,63 @@ function drawBlockMonsterShape(px, py, draw, shape) {
 
 function drawImpMonsterShape(px, py, draw, shape) {
   const centerX = px + draw.w / 2;
-  const top = py + draw.h * 0.2;
+  const top = py + draw.h * 0.12;
   ctx.fillStyle = shape.shade || "#4c1d95";
+
+  // Wings behind a compact two-legged body, matching the dedicated sprite silhouette.
   ctx.beginPath();
-  ctx.moveTo(centerX - draw.w * 0.18, top + 4);
-  ctx.lineTo(centerX - draw.w * 0.28, top - 9);
-  ctx.lineTo(centerX - draw.w * 0.06, top + 1);
-  ctx.lineTo(centerX + draw.w * 0.06, top + 1);
-  ctx.lineTo(centerX + draw.w * 0.28, top - 9);
-  ctx.lineTo(centerX + draw.w * 0.18, top + 4);
+  ctx.moveTo(centerX - 9, py + 29);
+  ctx.lineTo(centerX - 28, py + 19);
+  ctx.lineTo(centerX - 23, py + 31);
+  ctx.lineTo(centerX - 30, py + 37);
+  ctx.lineTo(centerX - 10, py + 42);
+  ctx.moveTo(centerX + 9, py + 29);
+  ctx.lineTo(centerX + 28, py + 19);
+  ctx.lineTo(centerX + 23, py + 31);
+  ctx.lineTo(centerX + 30, py + 37);
+  ctx.lineTo(centerX + 10, py + 42);
   ctx.fill();
+
+  ctx.fillStyle = shape.accent || "#c7354b";
+  ctx.beginPath();
+  ctx.moveTo(centerX - 7, top + 6);
+  ctx.lineTo(centerX - 16, top - 7);
+  ctx.lineTo(centerX - 12, top + 9);
+  ctx.moveTo(centerX + 7, top + 6);
+  ctx.lineTo(centerX + 16, top - 7);
+  ctx.lineTo(centerX + 12, top + 9);
+  ctx.fill();
+
   ctx.fillStyle = shape.fill || "#7c3aed";
   ctx.beginPath();
-  ctx.ellipse(centerX, py + draw.h * 0.56, draw.w * 0.24, draw.h * 0.31, 0, 0, Math.PI * 2);
+  ctx.ellipse(centerX, py + 22, 13, 14, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = shape.shade || "#4c1d95";
+
+  ctx.fillStyle = shape.accent || "#c7354b";
   ctx.beginPath();
-  ctx.moveTo(centerX - draw.w * 0.18, py + draw.h * 0.42);
-  ctx.lineTo(centerX - draw.w * 0.42, py + draw.h * 0.3);
-  ctx.lineTo(centerX - draw.w * 0.33, py + draw.h * 0.58);
-  ctx.closePath();
-  ctx.moveTo(centerX + draw.w * 0.18, py + draw.h * 0.42);
-  ctx.lineTo(centerX + draw.w * 0.42, py + draw.h * 0.3);
-  ctx.lineTo(centerX + draw.w * 0.33, py + draw.h * 0.58);
+  ctx.moveTo(centerX - 9, py + 35);
+  ctx.lineTo(centerX + 9, py + 35);
+  ctx.lineTo(centerX + 13, py + 54);
+  ctx.lineTo(centerX - 13, py + 54);
   ctx.closePath();
   ctx.fill();
+
+  ctx.strokeStyle = shape.fill || "#e96b67";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(centerX - 9, py + 39);
+  ctx.lineTo(centerX - 18, py + 47);
+  ctx.moveTo(centerX + 9, py + 39);
+  ctx.lineTo(centerX + 18, py + 47);
+  ctx.stroke();
+
   ctx.fillStyle = shape.eye || "#fef3c7";
-  ctx.fillRect(centerX - 10, py + draw.h * 0.48, 6, 4);
-  ctx.fillRect(centerX + 4, py + draw.h * 0.48, 6, 4);
+  ctx.fillRect(centerX - 9, py + 20, 6, 4);
+  ctx.fillRect(centerX + 3, py + 20, 6, 4);
   ctx.strokeStyle = shape.accent || "#f59e0b";
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.arc(centerX + draw.w * 0.24, py + draw.h * 0.72, 10, -1.1, 1.1);
+  ctx.arc(centerX + 13, py + 49, 12, -1.15, 1.05);
   ctx.stroke();
 }
 

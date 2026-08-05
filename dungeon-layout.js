@@ -181,6 +181,104 @@
       }
     }
 
+    function connectRoomPair(map, tileKinds, corridors, doorways, fromRoom, toRoom) {
+      const fromDoor = doorwayForRoomToward(fromRoom, toRoom);
+      const toDoor = doorwayForRoomToward(toRoom, fromRoom);
+      const corridorId = corridors.length + 1;
+      const allowedRoomTouchKeys = new Set([
+        key(fromDoor.outsideX, fromDoor.outsideY),
+        key(toDoor.outsideX, toDoor.outsideY),
+      ]);
+      const corridor = {
+        id: corridorId,
+        fromRoomId: fromRoom.id,
+        toRoomId: toRoom.id,
+        tiles: corridorTilesBetween(
+          { x: fromDoor.outsideX, y: fromDoor.outsideY },
+          { x: toDoor.outsideX, y: toDoor.outsideY },
+          tileKinds,
+          allowedRoomTouchKeys
+        ),
+      };
+
+      const fromDoorway = {
+        id: doorways.length + 1,
+        roomId: fromRoom.id,
+        corridorId,
+        x: fromDoor.x,
+        y: fromDoor.y,
+        outsideX: fromDoor.outsideX,
+        outsideY: fromDoor.outsideY,
+      };
+      const toDoorway = {
+        id: doorways.length + 2,
+        roomId: toRoom.id,
+        corridorId,
+        x: toDoor.x,
+        y: toDoor.y,
+        outsideX: toDoor.outsideX,
+        outsideY: toDoor.outsideY,
+      };
+
+      corridors.push(corridor);
+      doorways.push(fromDoorway, toDoorway);
+      fromRoom.doorways.push(fromDoorway.id);
+      toRoom.doorways.push(toDoorway.id);
+
+      carveCorridor(map, tileKinds, corridor);
+      tileKinds[fromDoor.y][fromDoor.x] = "doorway";
+      tileKinds[toDoor.y][toDoor.x] = "doorway";
+    }
+
+    function addOptionalConnections(map, tileKinds, rooms, corridors, doorways) {
+      if (rooms.length < 4 || rng(1, 100) > 65) return;
+
+      const pairs = [];
+      for (let fromIndex = 0; fromIndex < rooms.length; fromIndex++) {
+        for (let toIndex = fromIndex + 2; toIndex < rooms.length; toIndex++) {
+          pairs.push([rooms[fromIndex], rooms[toIndex]]);
+        }
+      }
+      if (pairs.length === 0) return;
+
+      const [fromRoom, toRoom] = pairs[rng(0, pairs.length - 1)];
+      connectRoomPair(map, tileKinds, corridors, doorways, fromRoom, toRoom);
+    }
+
+    function roomDistances(startRoom, rooms, corridors) {
+      const adjacency = new Map(rooms.map((room) => [room.id, []]));
+      for (const corridor of corridors) {
+        adjacency.get(corridor.fromRoomId)?.push(corridor.toRoomId);
+        adjacency.get(corridor.toRoomId)?.push(corridor.fromRoomId);
+      }
+
+      const distances = new Map([[startRoom.id, 0]]);
+      const queue = [startRoom.id];
+      while (queue.length) {
+        const roomId = queue.shift();
+        for (const nextId of adjacency.get(roomId) || []) {
+          if (distances.has(nextId)) continue;
+          distances.set(nextId, distances.get(roomId) + 1);
+          queue.push(nextId);
+        }
+      }
+      return distances;
+    }
+
+    function chooseStartAndStairRooms(rooms, corridors) {
+      if (rooms.length <= 2) return rooms;
+
+      const startRoom = rooms[rng(0, rooms.length - 1)];
+      const distances = roomDistances(startRoom, rooms, corridors);
+      const maxDistance = Math.max(...distances.values());
+      const minimumDistance = Math.max(2, Math.ceil(maxDistance * 0.6));
+      const stairCandidates = rooms.filter((room) => (distances.get(room.id) || 0) >= minimumDistance);
+      const stairPool = stairCandidates.length > 0 ? stairCandidates : rooms.filter((room) => room !== startRoom);
+      const stairRoom = stairPool[rng(0, stairPool.length - 1)];
+      const middleRooms = rooms.filter((room) => room !== startRoom && room !== stairRoom);
+      return [startRoom, ...middleRooms, stairRoom];
+    }
+
     function connectRooms(map, tileKinds, rooms) {
       const corridors = [];
       const doorways = [];
@@ -189,50 +287,10 @@
       for (let index = 1; index < rooms.length; index++) {
         const fromRoom = rooms[index - 1];
         const toRoom = rooms[index];
-        const fromDoor = doorwayForRoomToward(fromRoom, toRoom);
-        const toDoor = doorwayForRoomToward(toRoom, fromRoom);
-        const corridorId = corridors.length + 1;
-        const allowedRoomTouchKeys = new Set([key(fromDoor.outsideX, fromDoor.outsideY), key(toDoor.outsideX, toDoor.outsideY)]);
-        const corridor = {
-          id: corridorId,
-          fromRoomId: fromRoom.id,
-          toRoomId: toRoom.id,
-          tiles: corridorTilesBetween(
-            { x: fromDoor.outsideX, y: fromDoor.outsideY },
-            { x: toDoor.outsideX, y: toDoor.outsideY },
-            tileKinds,
-            allowedRoomTouchKeys
-          ),
-        };
-
-        const fromDoorway = {
-          id: doorways.length + 1,
-          roomId: fromRoom.id,
-          corridorId,
-          x: fromDoor.x,
-          y: fromDoor.y,
-          outsideX: fromDoor.outsideX,
-          outsideY: fromDoor.outsideY,
-        };
-        const toDoorway = {
-          id: doorways.length + 2,
-          roomId: toRoom.id,
-          corridorId,
-          x: toDoor.x,
-          y: toDoor.y,
-          outsideX: toDoor.outsideX,
-          outsideY: toDoor.outsideY,
-        };
-
-        corridors.push(corridor);
-        doorways.push(fromDoorway, toDoorway);
-        fromRoom.doorways.push(fromDoorway.id);
-        toRoom.doorways.push(toDoorway.id);
-
-        carveCorridor(map, tileKinds, corridor);
-        tileKinds[fromDoor.y][fromDoor.x] = "doorway";
-        tileKinds[toDoor.y][toDoor.x] = "doorway";
+        connectRoomPair(map, tileKinds, corridors, doorways, fromRoom, toRoom);
       }
+
+      addOptionalConnections(map, tileKinds, rooms, corridors, doorways);
 
       return { corridors, doorways };
     }
@@ -279,7 +337,8 @@
       }
 
       const { corridors, doorways } = connectRooms(map, tileKinds, rooms);
-      return { map, tileKinds, rooms, corridors, doorways };
+      const orderedRooms = chooseStartAndStairRooms(rooms, corridors);
+      return { map, tileKinds, rooms: orderedRooms, corridors, doorways };
     }
 
     function buildFallbackLayout() {
