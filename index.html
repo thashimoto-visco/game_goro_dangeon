@@ -13,7 +13,7 @@
           <h1>吾郎の不思議なダンジョン</h1>
           <button id="sound-toggle" class="sound-toggle" type="button" aria-pressed="false">音 OFF</button>
         </div>
-        <p class="subtitle">矢印キー or WASD で移動 / <kbd>Shift</kbd>+方向 でダッシュ / <kbd>Space</kbd> で足踏み / <kbd>I</kbd> で持ち物 / <kbd>M</kbd> でミニマップ</p>
+        <p class="subtitle">矢印キー or WASD で移動 / <kbd>Shift</kbd>+方向 でダッシュ / <kbd>Space</kbd> で足踏み / <kbd>I</kbd> で持ち物（<kbd>T</kbd> で投げる） / <kbd>M</kbd> でミニマップ</p>
         <canvas id="game" width="640" height="480" aria-label="ゲーム画面"></canvas>
       </section>
 
@@ -25,9 +25,10 @@
           <div><dt>HP</dt><dd id="hp">20 / 20</dd></div>
           <div><dt>攻撃</dt><dd id="atk">5</dd></div>
           <div><dt>守備</dt><dd id="def">2</dd></div>
-          <div><dt>満腹度</dt><dd id="hunger">100</dd></div>
+          <div><dt>満腹度</dt><dd id="hunger">100 / 100</dd></div>
           <div><dt>経験値</dt><dd id="exp">0 / 8</dd></div>
-          <div><dt>装備</dt><dd id="weapon">なし</dd></div>
+          <div><dt>武器</dt><dd id="weapon">なし</dd></div>
+          <div><dt>盾</dt><dd id="shield">なし</dd></div>
         </dl>
 
         <h2>持ち物</h2>
@@ -45,7 +46,10 @@
     </script>
     <script src="monster-catalog.js"></script>
     <script src="monster-system.js"></script>
+    <script src="item-catalog.js"></script>
+    <script src="item-system.js"></script>
     <script src="dungeon-spawn-tables.js"></script>
+    <script src="dungeon-item-tables.js"></script>
     <script src="dungeon-encounter-tables.js"></script>
     <script src="dungeon-layout.js"></script>
     <script src="dungeon-visibility.js"></script>

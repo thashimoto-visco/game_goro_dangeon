@@ -36,9 +36,12 @@
       strongDefault: {
         count: 1,
         entries: [
-          { type: "herb", weight: 40 },
-          { type: "ironSword", weight: 35 },
-          { type: "riceBall", weight: 25 },
+          { type: "herb", weight: 30 },
+          { type: "ironSword", weight: 20 },
+          { type: "ironShield", weight: 20 },
+          { type: "enhanceScroll", weight: 12 },
+          { type: "riceBall", weight: 12 },
+          { type: "demonSlayer", weight: 6 },
         ],
       },
     },

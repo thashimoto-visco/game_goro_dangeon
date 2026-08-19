@@ -19,10 +19,16 @@ const ITEM_DRAW = {
   shadowY: 4,
   glow: {
     weapon: "rgba(250, 204, 21, 0.2)",
+    weaponRare: "rgba(192, 132, 252, 0.26)",
+    shield: "rgba(148, 163, 184, 0.22)",
     food: "rgba(248, 250, 252, 0.18)",
     potion: "rgba(34, 197, 94, 0.2)",
+    scroll: "rgba(251, 146, 60, 0.22)",
   },
 };
+const HUNGER_BASE_MAX = 100;
+const HUNGER_HARD_MAX = 150;
+const THROW_RANGE = 6;
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -38,6 +44,14 @@ if (!window.GORO_DUNGEON_MONSTERS || typeof window.GORO_DUNGEON_MONSTERS.createS
 const monsterSystem = window.GORO_DUNGEON_MONSTERS.createSystem(window.GORO_DUNGEON_MONSTER_CATALOG);
 const monsterCatalog = monsterSystem.catalog;
 const monsterTypes = monsterSystem.types;
+
+if (!window.GORO_DUNGEON_ITEMS || typeof window.GORO_DUNGEON_ITEMS.createSystem !== "function") {
+  throw new Error("必要なアイテムシステム GORO_DUNGEON_ITEMS.createSystem を読み込めません。");
+}
+const itemSystem = window.GORO_DUNGEON_ITEMS.createSystem(window.GORO_DUNGEON_ITEM_CATALOG);
+if (itemSystem.catalog.length === 0) {
+  throw new Error("アイテムカタログ GORO_DUNGEON_ITEM_CATALOG が空です。");
+}
 
 if (!window.GORO_DUNGEON_SPECIAL_ENCOUNTERS || !window.GORO_DUNGEON_ENCOUNTER_DATA) {
   throw new Error("必要な特殊遭遇システムを読み込めません。");
@@ -79,8 +93,11 @@ const images = {
   },
   icons: {
     weapon: createImage("assets/icons/item_weapon.svg"),
+    weaponRare: createImage("assets/icons/item_weapon_rare.svg"),
+    shield: createImage("assets/icons/item_shield.svg"),
     food: createImage("assets/icons/item_food.svg"),
     potion: createImage("assets/icons/item_potion.svg"),
+    scroll: createImage("assets/icons/item_scroll.svg"),
   },
   monsters: Object.fromEntries(
     monsterCatalog.map((monster) => [monster.key, monster.asset ? createImage(monster.asset) : null])
@@ -139,8 +156,11 @@ const sprites = {
   },
   icons: {
     weapon: { image: images.icons.weapon },
+    weaponRare: { image: images.icons.weaponRare },
+    shield: { image: images.icons.shield },
     food: { image: images.icons.food },
     potion: { image: images.icons.potion },
+    scroll: { image: images.icons.scroll },
   },
   monsters: Object.fromEntries(monsterCatalog.map((monster) => [monster.key, { image: images.monsters[monster.key] }])),
 };
@@ -163,36 +183,7 @@ const debug = {
   structureOverlay: false,
 };
 
-const itemTypes = {
-  woodenSword: {
-    name: "木の棒",
-    kind: "weapon",
-    icon: "weapon",
-    atk: 1,
-    description: "攻撃+1",
-  },
-  ironSword: {
-    name: "鉄の剣",
-    kind: "weapon",
-    icon: "weapon",
-    atk: 3,
-    description: "攻撃+3",
-  },
-  riceBall: {
-    name: "おにぎり",
-    kind: "food",
-    icon: "food",
-    hunger: 35,
-    description: "満腹度+35",
-  },
-  herb: {
-    name: "薬草",
-    kind: "potion",
-    icon: "potion",
-    heal: 10,
-    description: "HP+10",
-  },
-};
+const itemTypes = itemSystem.definitions;
 
 const levelTable = [
   { level: 1, nextExp: 8, maxHp: 20, atk: 5, def: 2 },
@@ -222,41 +213,21 @@ function buildEnemySpawnTables(tables) {
 
 const floorEnemyTables = buildEnemySpawnTables(window.GORO_DUNGEON_ENEMY_SPAWN_TABLES);
 
-const floorItemTables = [
-  {
-    minFloor: 1,
-    maxFloor: 1,
-    count: [3, 5],
-    entries: [
-      { type: "riceBall", weight: 36 },
-      { type: "herb", weight: 40 },
-      { type: "woodenSword", weight: 20 },
-      { type: "ironSword", weight: 4 },
-    ],
-  },
-  {
-    minFloor: 2,
-    maxFloor: 3,
-    count: [3, 5],
-    entries: [
-      { type: "riceBall", weight: 32 },
-      { type: "herb", weight: 34 },
-      { type: "woodenSword", weight: 24 },
-      { type: "ironSword", weight: 10 },
-    ],
-  },
-  {
-    minFloor: 4,
-    maxFloor: 99,
-    count: [3, 6],
-    entries: [
-      { type: "riceBall", weight: 30 },
-      { type: "herb", weight: 30 },
-      { type: "woodenSword", weight: 22 },
-      { type: "ironSword", weight: 18 },
-    ],
-  },
-];
+function buildItemSpawnTables(tables, fallbackCount) {
+  const catalogKeys = new Set(itemSystem.keys);
+  const normalized = Array.isArray(tables) ? tables : [];
+  const spawnTables = normalized
+    .map((table) => ({
+      ...table,
+      count: Array.isArray(table.count) ? table.count : fallbackCount,
+      entries: (table.entries || []).filter((entry) => catalogKeys.has(entry.type) && entry.weight > 0),
+    }))
+    .filter((table) => table.entries.length > 0);
+  if (spawnTables.length > 0) return spawnTables;
+  return [{ minFloor: 1, maxFloor: 99, count: fallbackCount, entries: [{ type: itemSystem.keys[0], weight: 100 }] }];
+}
+
+const floorItemTables = buildItemSpawnTables(window.GORO_DUNGEON_ITEM_SPAWN_TABLES, [3, 5]);
 
 const floorEventTables = [
   {
@@ -288,30 +259,7 @@ const floorEventTables = [
   },
 ];
 
-const treasureRewardTables = [
-  {
-    minFloor: 1,
-    maxFloor: 3,
-    count: [2, 2],
-    entries: [
-      { type: "riceBall", weight: 30 },
-      { type: "herb", weight: 34 },
-      { type: "woodenSword", weight: 26 },
-      { type: "ironSword", weight: 10 },
-    ],
-  },
-  {
-    minFloor: 4,
-    maxFloor: 99,
-    count: [2, 2],
-    entries: [
-      { type: "riceBall", weight: 26 },
-      { type: "herb", weight: 30 },
-      { type: "woodenSword", weight: 24 },
-      { type: "ironSword", weight: 20 },
-    ],
-  },
-];
+const treasureRewardTables = buildItemSpawnTables(window.GORO_DUNGEON_TREASURE_REWARD_TABLES, [2, 2]);
 
 const eventRoomTypes = {
   treasure: {
@@ -445,6 +393,7 @@ const ui = {
   hunger: document.getElementById("hunger"),
   exp: document.getElementById("exp"),
   weapon: document.getElementById("weapon"),
+  shield: document.getElementById("shield"),
   inventory: document.getElementById("inventory"),
   soundToggle: document.getElementById("sound-toggle"),
   log: document.getElementById("log"),
@@ -492,11 +441,12 @@ const state = {
     atk: 5,
     def: 2,
     hunger: 100,
+    maxHunger: HUNGER_BASE_MAX,
     exp: 0,
     recoveryProgress: 0,
     inventoryLimit: 9,
     inventory: [],
-    weapon: null,
+    equipment: { weapon: null, shield: null },
     motion: null,
     hitTime: 0,
     hitDuration: 0,
@@ -836,6 +786,28 @@ function playSound(name) {
     playTone(180, 0.08, "triangle", 0.06);
     return;
   }
+  if (name === "throw") {
+    playTone(300, 0.05, "triangle", 0.07);
+    playTone(220, 0.06, "square", 0.05, 0.04);
+    return;
+  }
+  if (name === "scroll") {
+    playTone(494, 0.06, "sine", 0.07);
+    playTone(587, 0.07, "sine", 0.07, 0.055);
+    playTone(740, 0.09, "triangle", 0.06, 0.11);
+    return;
+  }
+  if (name === "thunder") {
+    playTone(140, 0.05, "sawtooth", 0.12);
+    playTone(1180, 0.06, "square", 0.09, 0.03);
+    playTone(90, 0.24, "sawtooth", 0.1, 0.08);
+    return;
+  }
+  if (name === "slayer") {
+    playTone(880, 0.05, "square", 0.1);
+    playTone(1320, 0.08, "triangle", 0.09, 0.04);
+    return;
+  }
   if (name === "fail") {
     playTone(90, 0.08, "sawtooth", 0.06);
     return;
@@ -1104,6 +1076,19 @@ function addImpactEffect(x, y) {
   });
 }
 
+function addThrowEffect(item, toX, toY) {
+  effects.push({
+    type: "throwItem",
+    icon: itemTypes[item.type].icon,
+    fromX: state.player.x,
+    fromY: state.player.y,
+    x: toX,
+    y: toY,
+    age: 0,
+    duration: 190,
+  });
+}
+
 function addDefeatEffect(x, y) {
   effects.push({
     type: "defeat",
@@ -1164,9 +1149,9 @@ function clearTransientVisuals() {
   state.player.hitDuration = 0;
 }
 
-function currentWeaponName() {
-  const weapon = equippedWeapon();
-  return weapon ? itemTypes[weapon.type].name : "なし";
+function equippedNameForSlot(slot) {
+  const item = equippedItem(slot);
+  return item ? itemSystem.displayName(item) : "なし";
 }
 
 function currentInventoryItem() {
@@ -1219,17 +1204,18 @@ function dropInventoryItem(index) {
     return;
   }
 
-  const itemType = itemTypes[item.type];
+  const label = itemSystem.displayName(item);
   removeInventoryItem(item);
   state.items.push({
     id: item.id,
     type: item.type,
+    upgrade: item.upgrade || 0,
     x: state.player.x,
     y: state.player.y,
   });
   state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
   playSound("drop");
-  addLog(`${itemType.name}を置いた。`);
+  addLog(`${label}を置いた。`);
   closeMenu();
 }
 
@@ -1253,6 +1239,10 @@ function handleMenuInput(key) {
   }
   if (key === "d") {
     dropInventoryItem(state.menu.selectedIndex);
+    return;
+  }
+  if (key === "t") {
+    throwInventoryItem(state.menu.selectedIndex);
   }
 }
 
@@ -1587,20 +1577,48 @@ function isEnemyPlacementBlocked(x, y) {
   return Boolean(enemyAt(x, y));
 }
 
-function equippedWeapon() {
-  if (!state.player.weapon) return null;
-  const item = state.player.inventory.find((entry) => entry.id === state.player.weapon);
-  if (!item || itemTypes[item.type].kind !== "weapon") return null;
+function equippedItem(slot) {
+  const equippedId = state.player.equipment[slot];
+  if (!equippedId) return null;
+  const item = state.player.inventory.find((entry) => entry.id === equippedId);
+  if (!item || itemSystem.equipSlotOf(item.type) !== slot) return null;
   return item;
+}
+
+function equippedWeapon() {
+  return equippedItem("weapon");
+}
+
+function equippedShield() {
+  return equippedItem("shield");
+}
+
+function isEquipped(item) {
+  return Boolean(item) && Object.values(state.player.equipment).includes(item.id);
 }
 
 function weaponAttackBonus() {
   const weapon = equippedWeapon();
-  return weapon ? itemTypes[weapon.type].atk : 0;
+  return weapon ? itemSystem.attackBonus(weapon) : 0;
+}
+
+function shieldDefenseBonus() {
+  const shield = equippedShield();
+  return shield ? itemSystem.defenseBonus(shield) : 0;
 }
 
 function playerAttackPower() {
   return state.player.atk + weaponAttackBonus();
+}
+
+function playerDefensePower() {
+  return state.player.def + shieldDefenseBonus();
+}
+
+function slayerBonusAgainst(enemy) {
+  const weapon = equippedWeapon();
+  if (!weapon || !enemy) return 0;
+  return itemSystem.slayerBonusFor(weapon, enemy.tags);
 }
 
 function placeEnemies(rooms) {
@@ -1679,10 +1697,11 @@ function applyDebugEncounterLoadout() {
   state.player.hp = level.maxHp;
   state.player.atk = level.atk;
   state.player.def = level.def;
-  const weapon = { id: nextItemId, type: "ironSword" };
-  nextItemId += 1;
-  state.player.inventory = [weapon];
-  state.player.weapon = weapon.id;
+  const weapon = createItemInstance("ironSword");
+  const shield = createItemInstance("woodenShield");
+  state.player.inventory = [weapon, shield];
+  state.player.equipment.weapon = weapon.id;
+  state.player.equipment.shield = shield.id;
 }
 
 function announceSpecialEncounterPresence() {
@@ -1696,6 +1715,22 @@ function announceSpecialEncounterPresence() {
 function randomItemType() {
   const table = tableForFloor(floorItemTables, state.floor);
   return table?.entries?.length ? weightedPick(table.entries) : null;
+}
+
+// Every item instance, on the floor or in the bag, is built here so that
+// individual state such as the upgrade level always travels with the item.
+function createItemInstance(type, options = {}) {
+  const item = {
+    id: nextItemId,
+    type,
+    upgrade: itemSystem.clampUpgrade(type, options.upgrade || 0),
+  };
+  nextItemId += 1;
+  if (Number.isFinite(options.x) && Number.isFinite(options.y)) {
+    item.x = options.x;
+    item.y = options.y;
+  }
+  return item;
 }
 
 function isItemPlacementBlocked(x, y) {
@@ -1726,13 +1761,7 @@ function placeItems(rooms) {
     if (isItemPlacementBlocked(x, y)) continue;
     const type = randomItemType();
     if (!type || !itemTypes[type]) break;
-    state.items.push({
-      id: nextItemId,
-      type,
-      x,
-      y,
-    });
-    nextItemId += 1;
+    state.items.push(createItemInstance(type, { x, y }));
   }
 }
 
@@ -1751,13 +1780,7 @@ function placeTreasureRoomRewards(eventRoom) {
     if (isItemPlacementBlocked(x, y)) continue;
     const type = weightedPick(table.entries);
     if (!type || !itemTypes[type]) break;
-    state.items.push({
-      id: nextItemId,
-      type,
-      x,
-      y,
-    });
-    nextItemId += 1;
+    state.items.push(createItemInstance(type, { x, y }));
     placed += 1;
   }
 }
@@ -1795,12 +1818,11 @@ function placeEnemyGuaranteedReward(enemy) {
     addLog("強敵の落とし物を置ける場所がなかった。");
     return null;
   }
-  const type = weightedPick(profile.entries);
-  if (!type || !itemTypes[type]) return null;
-  const item = { id: nextItemId, type, x: position.x, y: position.y };
-  nextItemId += 1;
+  const entry = weightedPickEntry(profile.entries);
+  if (!entry?.type || !itemTypes[entry.type]) return null;
+  const item = createItemInstance(entry.type, { x: position.x, y: position.y, upgrade: entry.upgrade });
   state.items.push(item);
-  addLog(`${itemTypes[type].name}を落とした！`);
+  addLog(`${itemSystem.displayName(item)}を落とした！`);
   return item;
 }
 
@@ -1830,10 +1852,11 @@ function handleEnemyDefeat(enemy) {
 }
 
 function buildPlayerAttackResult(enemy) {
-  const damage = Math.max(1, playerAttackPower() + rng(0, 2));
+  const slayerBonus = slayerBonusAgainst(enemy);
+  const damage = Math.max(1, playerAttackPower() + slayerBonus + rng(0, 2));
   const killed = enemy.hp - damage <= 0;
-  const counterDamage = killed ? 0 : Math.max(1, enemy.atk - state.player.def + rng(0, 1));
-  return { damage, killed, counterDamage };
+  const counterDamage = killed ? 0 : Math.max(1, enemy.atk - playerDefensePower() + rng(0, 1));
+  return { damage, killed, counterDamage, slayerBonus };
 }
 
 function startPlayerAttack(enemy) {
@@ -1885,9 +1908,15 @@ function applyPlayerAttackHit(action) {
   addMonsterBurstEffect(enemy, "hit");
   addImpactEffect(enemy.x, enemy.y);
   addFloatingText(String(action.result.damage), enemy.x, enemy.y, "#fde68a");
-  playSound("hit");
+  playSound(action.result.slayerBonus > 0 ? "slayer" : "hit");
   startHitStop(action.result.killed ? 130 : 60);
   startCameraShake(90, action.result.killed ? 4 : 2);
+  if (action.result.slayerBonus > 0) {
+    const weapon = equippedWeapon();
+    addFloatingText("特効", enemy.x, enemy.y - 1, "#c084fc");
+    startFlash("rgba(192,132,252,0.18)", 150);
+    addLog(`${itemSystem.displayName(weapon)}が${itemSystem.slayerLabelFor(weapon)}に効いた！`);
+  }
   addLog(`${enemy.name}に${action.result.damage}ダメージ。`);
 
   if (enemy.hp <= 0) {
@@ -1953,7 +1982,7 @@ function moveEnemies(options = {}) {
     if (specialEncounter && !specialEncounterSystem.containsPosition(specialEncounter, nx, ny)) continue;
 
     if (state.player.x === nx && state.player.y === ny) {
-      const enemyDmg = Math.max(1, e.atk - state.player.def + rng(0, 1));
+      const enemyDmg = Math.max(1, e.atk - playerDefensePower() + rng(0, 1));
       e.counterTime = 140;
       e.counterDuration = 140;
       e.counterDirection = directionBetween(e, state.player);
@@ -2061,17 +2090,229 @@ function pickUpItemAtPlayer() {
   }
 
   state.items = state.items.filter((entry) => entry.id !== item.id);
-  state.player.inventory.push({ id: item.id, type: item.type });
+  state.player.inventory.push({ id: item.id, type: item.type, upgrade: item.upgrade || 0 });
   playSound("pickup");
-  addLog(`${itemTypes[item.type].name}を拾った。`);
+  addLog(`${itemSystem.displayName(item)}を拾った。`);
   return true;
 }
 
 function removeInventoryItem(item) {
   state.player.inventory = state.player.inventory.filter((entry) => entry.id !== item.id);
-  if (state.player.weapon === item.id) {
-    state.player.weapon = null;
+  for (const slot of Object.keys(state.player.equipment)) {
+    if (state.player.equipment[slot] === item.id) {
+      state.player.equipment[slot] = null;
+    }
   }
+}
+
+function toggleEquip(item, slot) {
+  if (state.player.equipment[slot] === item.id) {
+    state.player.equipment[slot] = null;
+    playSound("drop");
+    addLog(`${itemSystem.displayName(item)}を外した。`);
+    return;
+  }
+
+  state.player.equipment[slot] = item.id;
+  playSound("use");
+  addLog(`${itemSystem.displayName(item)}を装備した。${itemSystem.effectText(item)}。`);
+}
+
+function eatFoodItem(item) {
+  const definition = itemTypes[item.type];
+  const beforeHunger = state.player.hunger;
+  const beforeMax = state.player.maxHunger;
+
+  if (definition.hungerMax) {
+    state.player.maxHunger = Math.min(HUNGER_HARD_MAX, state.player.maxHunger + definition.hungerMax);
+  }
+  state.player.hunger = Math.min(state.player.maxHunger, state.player.hunger + (definition.hunger || 0));
+  removeInventoryItem(item);
+  playSound("use");
+  addLog(`${itemSystem.displayName(item)}を食べた。満腹度 ${beforeHunger}→${state.player.hunger}。`);
+  if (state.player.maxHunger > beforeMax) {
+    addFloatingText(`最大満腹+${state.player.maxHunger - beforeMax}`, state.player.x, state.player.y, "#fbbf24");
+    addLog(`満腹度の最大値が ${beforeMax}→${state.player.maxHunger} になった。`);
+  }
+}
+
+function drinkPotionItem(item) {
+  const definition = itemTypes[item.type];
+  const before = state.player.hp;
+  state.player.hp = Math.min(state.player.maxHp, state.player.hp + (definition.heal || 0));
+  removeInventoryItem(item);
+  playSound("use");
+  addLog(`${itemSystem.displayName(item)}を使った。HP ${before}→${state.player.hp}。`);
+}
+
+// The enhance scroll has no target picker, so the priority order is fixed:
+// the weapon first, then the shield. The log always names what was raised.
+function applyEnhanceScroll() {
+  const target = equippedWeapon() || equippedShield();
+  if (!target) {
+    addLog("巻物の力は行き場をなくして消えた。");
+    return;
+  }
+
+  if (!itemSystem.canUpgrade(target)) {
+    addLog(`${itemSystem.displayName(target)}はこれ以上強くならなかった。`);
+    return;
+  }
+
+  const before = itemSystem.displayName(target);
+  target.upgrade = itemSystem.clampUpgrade(target.type, (target.upgrade || 0) + 1);
+  playSound("levelUp");
+  startFlash("rgba(250,204,21,0.2)", 170);
+  addFloatingText("強化", state.player.x, state.player.y, "#fde047");
+  addLog(`${before}は${itemSystem.displayName(target)}になった。${itemSystem.effectText(target)}。`);
+}
+
+function thunderScrollTargets() {
+  const room = state.rooms.find((entry) => roomContains(entry, state.player.x, state.player.y));
+  if (room) {
+    return state.enemies.filter((enemy) => enemy.hp > 0 && roomContains(room, enemy.x, enemy.y));
+  }
+  return state.enemies.filter(
+    (enemy) =>
+      enemy.hp > 0 && Math.max(Math.abs(enemy.x - state.player.x), Math.abs(enemy.y - state.player.y)) <= 2
+  );
+}
+
+function applyThunderScroll(definition) {
+  const targets = thunderScrollTargets();
+  playSound("thunder");
+  startFlash("rgba(191,219,254,0.32)", 200);
+  startCameraShake(200, 4);
+
+  if (targets.length === 0) {
+    addLog("いかずちは空を切った。");
+    return;
+  }
+
+  const damage = Math.max(1, definition.power || 1);
+  for (const enemy of targets) {
+    enemy.hp -= damage;
+    enemy.hitTime = 180;
+    enemy.hitDuration = 180;
+    enemy.hitDirection = directionBetween(state.player, enemy);
+    addMonsterBurstEffect(enemy, "hit");
+    addImpactEffect(enemy.x, enemy.y);
+    addFloatingText(String(damage), enemy.x, enemy.y, "#bfdbfe");
+    addLog(`いかずちが${enemy.name}に${damage}ダメージ。`);
+    if (enemy.hp <= 0) {
+      handleEnemyDefeat(enemy);
+    }
+  }
+}
+
+function readScrollItem(item) {
+  const definition = itemTypes[item.type];
+  removeInventoryItem(item);
+  playSound("scroll");
+  addLog(`${itemSystem.displayName(item)}を読んだ。`);
+
+  if (definition.effect === "enhance") {
+    applyEnhanceScroll();
+    return;
+  }
+  if (definition.effect === "thunder") {
+    applyThunderScroll(definition);
+    return;
+  }
+  addLog("何も起こらなかった。");
+}
+
+function throwPathTiles(dx, dy) {
+  const tiles = [];
+  let x = state.player.x;
+  let y = state.player.y;
+
+  for (let step = 0; step < THROW_RANGE; step++) {
+    x += dx;
+    y += dy;
+    if (!isWalkable(x, y)) break;
+    tiles.push({ x, y });
+    if (enemyAt(x, y)) break;
+  }
+  return tiles;
+}
+
+// Looser than isItemPlacementBlocked: a thrown item may land at the thrower's feet.
+function canDropThrownItemAt(x, y) {
+  if (!isWalkable(x, y)) return false;
+  if (state.stairs.x === x && state.stairs.y === y) return false;
+  if (eventObjectAt(x, y)) return false;
+  if (enemyAt(x, y)) return false;
+  return !itemAt(x, y);
+}
+
+function resolveThrownHit(item, enemy) {
+  const damage = Math.max(1, itemSystem.throwPowerOf(item) + rng(0, 1));
+  enemy.hp -= damage;
+  enemy.hitTime = 180;
+  enemy.hitDuration = 180;
+  enemy.hitDirection = directionBetween(state.player, enemy);
+  addMonsterBurstEffect(enemy, "hit");
+  addImpactEffect(enemy.x, enemy.y);
+  addFloatingText(String(damage), enemy.x, enemy.y, "#fde68a");
+  playSound("hit");
+  startHitStop(60);
+  startCameraShake(90, 2);
+  addLog(`${enemy.name}に${damage}ダメージ。${itemSystem.displayName(item)}は壊れた。`);
+  if (enemy.hp <= 0) {
+    handleEnemyDefeat(enemy);
+  }
+}
+
+function dropThrownItem(item, path) {
+  const candidates = path.slice().reverse();
+  candidates.push({ x: state.player.x, y: state.player.y });
+  const position = candidates.find((candidate) => canDropThrownItemAt(candidate.x, candidate.y));
+
+  if (!position) {
+    addLog(`${itemSystem.displayName(item)}はどこかへ消えてしまった。`);
+    return;
+  }
+
+  state.items.push({ id: item.id, type: item.type, upgrade: item.upgrade || 0, x: position.x, y: position.y });
+  playSound("drop");
+  addLog(`${itemSystem.displayName(item)}は床に落ちた。`);
+}
+
+function throwInventoryItem(index) {
+  if (state.menu.type !== "inventory") return;
+  const item = state.player.inventory[index];
+  if (!item) {
+    playSound("fail");
+    return;
+  }
+
+  if (isEquipped(item)) {
+    playSound("fail");
+    addLog("装備中のものは投げられない。");
+    return;
+  }
+
+  const delta = directionToDelta(state.player.direction);
+  const path = throwPathTiles(delta.dx, delta.dy);
+  const landing = path[path.length - 1] || { x: state.player.x, y: state.player.y };
+  const target = path.length > 0 ? enemyAt(landing.x, landing.y) : null;
+
+  removeInventoryItem(item);
+  state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
+  closeMenu();
+
+  addThrowEffect(item, landing.x, landing.y);
+  playSound("throw");
+  addLog(`${itemSystem.displayName(item)}を投げた！`);
+
+  if (target) {
+    resolveThrownHit(item, target);
+  } else {
+    dropThrownItem(item, path);
+  }
+
+  tickTurn();
 }
 
 function useInventorySlot(slotIndex) {
@@ -2082,33 +2323,34 @@ function useInventorySlot(slotIndex) {
     return;
   }
 
-  const itemType = itemTypes[item.type];
-  if (itemType.kind === "weapon") {
-    state.player.weapon = item.id;
-    playSound("use");
-    addLog(`${itemType.name}を装備した。`);
+  const slot = itemSystem.equipSlotOf(item.type);
+  if (slot) {
+    toggleEquip(item, slot);
     tickTurn();
     return;
   }
 
-  if (itemType.kind === "food") {
-    const before = state.player.hunger;
-    state.player.hunger = Math.min(100, state.player.hunger + itemType.hunger);
-    removeInventoryItem(item);
-    playSound("use");
-    addLog(`${itemType.name}を食べた。満腹度 ${before}→${state.player.hunger}。`);
+  const kind = itemSystem.kindOf(item.type);
+  if (kind === "food") {
+    eatFoodItem(item);
     tickTurn();
     return;
   }
 
-  if (itemType.kind === "potion") {
-    const before = state.player.hp;
-    state.player.hp = Math.min(state.player.maxHp, state.player.hp + itemType.heal);
-    removeInventoryItem(item);
-    playSound("use");
-    addLog(`${itemType.name}を使った。HP ${before}→${state.player.hp}。`);
+  if (kind === "potion") {
+    drinkPotionItem(item);
     tickTurn();
+    return;
   }
+
+  if (kind === "scroll") {
+    readScrollItem(item);
+    tickTurn();
+    return;
+  }
+
+  playSound("fail");
+  addLog(`${itemSystem.displayName(item)}の使い方が分からない。`);
 }
 
 function resetPlayerRunState() {
@@ -2130,12 +2372,13 @@ function resetPlayerRunState() {
   state.player.hp = state.player.maxHp;
   state.player.atk = initialLevel.atk;
   state.player.def = initialLevel.def;
-  state.player.hunger = 100;
+  state.player.maxHunger = HUNGER_BASE_MAX;
+  state.player.hunger = state.player.maxHunger;
   state.player.exp = 0;
   state.player.recoveryProgress = 0;
   state.player.direction = "down";
   state.player.inventory = [];
-  state.player.weapon = null;
+  state.player.equipment = { weapon: null, shield: null };
   state.player.hitTime = 0;
   state.player.hitDuration = 0;
   state.player.hitDirection = "down";
@@ -2881,6 +3124,55 @@ function drawEventObjectLayer() {
   }
 }
 
+// Kept separate from the icon path so every item kind still reads as its own
+// silhouette when the SVG icons are unavailable.
+const ITEM_FALLBACK_COLORS = {
+  weapon: "#d6b15f",
+  weaponRare: "#c084fc",
+  shield: "#94a3b8",
+  food: "#f97316",
+  potion: "#22c55e",
+  scroll: "#fbbf24",
+};
+
+function drawItemFallbackShape(itemType, sx, sy) {
+  const kind = itemType.kind;
+  ctx.fillStyle = ITEM_FALLBACK_COLORS[itemType.icon] || ITEM_FALLBACK_COLORS[kind] || "#22c55e";
+  ctx.beginPath();
+
+  if (kind === "weapon") {
+    ctx.moveTo(sx + 10, sy + 23);
+    ctx.lineTo(sx + 22, sy + 9);
+    ctx.lineTo(sx + 24, sy + 12);
+    ctx.lineTo(sx + 12, sy + 25);
+  } else if (kind === "shield") {
+    ctx.moveTo(sx + 16, sy + 7);
+    ctx.lineTo(sx + 25, sy + 11);
+    ctx.lineTo(sx + 25, sy + 18);
+    ctx.lineTo(sx + 16, sy + 26);
+    ctx.lineTo(sx + 7, sy + 18);
+    ctx.lineTo(sx + 7, sy + 11);
+    ctx.closePath();
+  } else if (kind === "food") {
+    ctx.moveTo(sx + 16, sy + 7);
+    ctx.lineTo(sx + 26, sy + 25);
+    ctx.lineTo(sx + 6, sy + 25);
+    ctx.closePath();
+  } else if (kind === "scroll") {
+    ctx.rect(sx + 8, sy + 9, 16, 15);
+  } else {
+    ctx.arc(sx + TILE / 2, sy + TILE / 2, 8, 0, Math.PI * 2);
+  }
+
+  ctx.fill();
+
+  if (kind === "scroll") {
+    ctx.fillStyle = "#7c2d12";
+    ctx.fillRect(sx + 6, sy + 7, 20, 3);
+    ctx.fillRect(sx + 6, sy + 23, 20, 3);
+  }
+}
+
 function drawItemLayer() {
   for (const item of state.items) {
     if (!isVisibleTile(item.x, item.y)) continue;
@@ -2891,7 +3183,7 @@ function drawItemLayer() {
     const iconY = sy + ITEM_DRAW.offsetY;
 
     ctx.save();
-    ctx.fillStyle = ITEM_DRAW.glow[itemType.kind] || "rgba(250, 204, 21, 0.18)";
+    ctx.fillStyle = ITEM_DRAW.glow[itemType.icon] || ITEM_DRAW.glow[itemType.kind] || "rgba(250, 204, 21, 0.18)";
     ctx.beginPath();
     ctx.arc(sx + TILE / 2, sy + TILE / 2, 13, 0, Math.PI * 2);
     ctx.fill();
@@ -2903,22 +3195,7 @@ function drawItemLayer() {
 
     const didDraw = drawSprite(sprites.icons[itemType.icon], iconX, iconY, ITEM_DRAW.size, ITEM_DRAW.size);
     if (!didDraw) {
-      ctx.fillStyle = itemType.kind === "weapon" ? "#d6b15f" : itemType.kind === "food" ? "#f97316" : "#22c55e";
-      ctx.beginPath();
-      if (itemType.kind === "weapon") {
-        ctx.moveTo(sx + 10, sy + 23);
-        ctx.lineTo(sx + 22, sy + 9);
-        ctx.lineTo(sx + 24, sy + 12);
-        ctx.lineTo(sx + 12, sy + 25);
-      } else if (itemType.kind === "food") {
-        ctx.moveTo(sx + 16, sy + 7);
-        ctx.lineTo(sx + 26, sy + 25);
-        ctx.lineTo(sx + 6, sy + 25);
-        ctx.closePath();
-      } else {
-        ctx.arc(sx + TILE / 2, sy + TILE / 2, 8, 0, Math.PI * 2);
-      }
-      ctx.fill();
+      drawItemFallbackShape(itemType, sx, sy);
     }
     ctx.restore();
   }
@@ -3297,6 +3574,26 @@ function drawMonsterBurstEffect(effect) {
   ctx.restore();
 }
 
+function drawThrowItemEffect(effect) {
+  const progress = clamp(effect.age / effect.duration, 0, 1);
+  const gridX = effect.fromX + (effect.x - effect.fromX) * progress;
+  const gridY = effect.fromY + (effect.y - effect.fromY) * progress;
+  const size = ITEM_DRAW.size * 0.82;
+  const centerX = worldToScreenX(gridToWorldX(gridX) + TILE / 2);
+  const centerY = worldToScreenY(gridToWorldY(gridY) + TILE / 2 - 4);
+
+  ctx.save();
+  ctx.globalAlpha = 1 - progress * 0.25;
+  ctx.translate(centerX, centerY);
+  ctx.rotate(progress * Math.PI * 2);
+  const didDraw = drawSprite(sprites.icons[effect.icon], -size / 2, -size / 2, size, size);
+  if (!didDraw) {
+    ctx.fillStyle = "#e2e8f0";
+    ctx.fillRect(-size / 4, -size / 4, size / 2, size / 2);
+  }
+  ctx.restore();
+}
+
 function drawEffectsLayer() {
   ctx.save();
   ctx.textAlign = "center";
@@ -3331,6 +3628,11 @@ function drawEffectsLayer() {
       continue;
     }
 
+    if (effect.type === "throwItem") {
+      drawThrowItemEffect(effect);
+      continue;
+    }
+
     if (effect.type !== "floatingText") continue;
 
     const progress = effect.age / effect.duration;
@@ -3354,9 +3656,13 @@ function drawMenuLayer() {
   }
 }
 
+function equippedSlotOfItem(item) {
+  return Object.keys(state.player.equipment).find((slot) => state.player.equipment[slot] === item.id) || null;
+}
+
 function drawInventoryMenu() {
-  const panelWidth = 430;
-  const panelHeight = 320;
+  const panelWidth = 440;
+  const panelHeight = 380;
   const panelX = Math.round((canvas.width - panelWidth) / 2);
   const panelY = Math.round((canvas.height - panelHeight) / 2);
   const items = state.player.inventory;
@@ -3389,8 +3695,7 @@ function drawInventoryMenu() {
   } else {
     for (let index = 0; index < items.length; index++) {
       const item = items[index];
-      const itemType = itemTypes[item.type];
-      const rowY = panelY + 76 + index * 24;
+      const rowY = panelY + 74 + index * 24;
       const isSelected = index === state.menu.selectedIndex;
 
       if (isSelected) {
@@ -3401,29 +3706,42 @@ function drawInventoryMenu() {
       }
 
       ctx.fillStyle = isSelected ? "#f8fafc" : "#dbeafe";
-      ctx.fillText(`${index + 1}. ${itemType.name}`, panelX + 42, rowY);
+      ctx.fillText(`${index + 1}. ${itemSystem.displayName(item)}`, panelX + 42, rowY);
 
-      if (state.player.weapon === item.id) {
+      ctx.fillStyle = isSelected ? "#cbd5e1" : "#8ea3c5";
+      ctx.fillText(itemSystem.kindLabel(item), panelX + 250, rowY);
+
+      const equippedSlot = equippedSlotOfItem(item);
+      if (equippedSlot) {
         ctx.fillStyle = "#facc15";
-        ctx.fillText("装備中", panelX + 190, rowY);
+        ctx.fillText(equippedSlot === "shield" ? "装備 盾" : "装備 武器", panelX + 310, rowY);
       }
     }
   }
 
+  const detailY = panelY + 282;
   ctx.fillStyle = "#090d14";
-  ctx.fillRect(panelX + 22, panelY + 235, panelWidth - 44, 48);
+  ctx.fillRect(panelX + 22, detailY, panelWidth - 44, 62);
   ctx.strokeStyle = "#6b4e27";
   ctx.lineWidth = 2;
-  ctx.strokeRect(panelX + 22, panelY + 235, panelWidth - 44, 48);
+  ctx.strokeRect(panelX + 22, detailY, panelWidth - 44, 62);
+
   ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
   ctx.fillStyle = "#e6ecff";
-  const detailText = selected ? `${itemTypes[selected.type].description}` : "アイテムを持っていない。";
-  ctx.fillText(detailText, panelX + 36, panelY + 260);
+  const effectLine = selected
+    ? `[${itemSystem.kindLabel(selected)}] ${itemSystem.effectText(selected)}`
+    : "アイテムを持っていない。";
+  ctx.fillText(effectLine, panelX + 36, detailY + 22);
+
+  ctx.font = "12px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "#9fb2d4";
+  ctx.fillText(selected ? itemSystem.flavorText(selected) : "", panelX + 36, detailY + 44);
 
   ctx.fillStyle = "#c8d3f0";
   ctx.font = "bold 12px 'Yu Gothic UI', sans-serif";
-  const hint = items.length > 0 ? "Enter: 使う/装備  D: 置く  Esc: 閉じる" : "Esc: 閉じる";
-  ctx.fillText(hint, panelX + 24, panelY + panelHeight - 22);
+  const actionHint = selected ? `Enter: ${itemSystem.actionLabel(selected)}` : "Enter: 使う/装備";
+  const hint = items.length > 0 ? `${actionHint}  T: 投げる  D: 置く  Esc: 閉じる` : "Esc: 閉じる";
+  ctx.fillText(hint, panelX + 24, panelY + panelHeight - 20);
   ctx.restore();
 }
 
@@ -3529,7 +3847,7 @@ function drawGameOverLayer() {
   const fade = clamp(progress * 1.4, 0, 0.78);
   const panelAlpha = clamp((progress - 0.25) / 0.55, 0, 1);
   const panelWidth = 420;
-  const panelHeight = 336;
+  const panelHeight = 356;
   const panelX = Math.round((canvas.width - panelWidth) / 2);
   const panelY = Math.round((canvas.height - panelHeight) / 2);
   const reasonLines = splitTextByLength(state.gameOver.reason || defeatReasons.fallbackEnemy, 15);
@@ -3572,11 +3890,12 @@ function drawGameOverLayer() {
       `強敵撃破数: ${state.stats.strongDefeated}`,
       `経験値: ${state.player.exp}`,
       `経過ターン: ${state.stats.turns}`,
-      `装備: ${currentWeaponName()}`,
+      `武器: ${equippedNameForSlot("weapon")}`,
+      `盾: ${equippedNameForSlot("shield")}`,
     ];
 
     for (let i = 0; i < lines.length; i++) {
-      ctx.fillText(lines[i], canvas.width / 2, panelY + 130 + i * 24);
+      ctx.fillText(lines[i], canvas.width / 2, panelY + 128 + i * 23);
     }
 
     ctx.fillStyle = "#facc15";
@@ -3610,22 +3929,24 @@ function draw() {
 }
 
 function updateUi() {
-  const weapon = equippedWeapon();
-  const bonus = weaponAttackBonus();
+  const attackBonus = weaponAttackBonus();
+  const defenseBonus = shieldDefenseBonus();
   ui.floor.textContent = `${state.floor}F`;
   ui.level.textContent = state.player.level;
   ui.hp.textContent = `${Math.max(0, state.player.hp)} / ${state.player.maxHp}`;
-  ui.atk.textContent = bonus > 0 ? `${state.player.atk} + ${bonus}` : state.player.atk;
-  ui.def.textContent = state.player.def;
-  ui.hunger.textContent = state.player.hunger;
+  ui.atk.textContent = attackBonus > 0 ? `${state.player.atk} + ${attackBonus}` : state.player.atk;
+  ui.def.textContent = defenseBonus > 0 ? `${state.player.def} + ${defenseBonus}` : state.player.def;
+  ui.hunger.textContent = `${state.player.hunger} / ${state.player.maxHunger}`;
   ui.exp.textContent = expDisplayText();
-  ui.weapon.textContent = weapon ? itemTypes[weapon.type].name : "なし";
+  ui.weapon.textContent = equippedNameForSlot("weapon");
+  if (ui.shield) ui.shield.textContent = equippedNameForSlot("shield");
   renderInventory();
 }
 
 function renderInventory() {
-  const renderKey = `${state.player.weapon || "none"}:${state.player.inventory
-    .map((item) => `${item.id}-${item.type}`)
+  const equipmentKey = `${state.player.equipment.weapon || "none"}/${state.player.equipment.shield || "none"}`;
+  const renderKey = `${equipmentKey}:${state.player.inventory
+    .map((item) => `${item.id}-${item.type}+${item.upgrade || 0}`)
     .join(",")}`;
   if (renderKey === inventoryRenderKey) return;
   inventoryRenderKey = renderKey;
@@ -3641,14 +3962,14 @@ function renderInventory() {
 
   for (let index = 0; index < state.player.inventory.length; index++) {
     const item = state.player.inventory[index];
-    const itemType = itemTypes[item.type];
     const li = document.createElement("li");
-    li.textContent = `${itemType.name} / ${itemType.description}`;
+    li.textContent = `${itemSystem.displayName(item)} / ${itemSystem.effectText(item)}`;
 
-    if (state.player.weapon === item.id) {
+    const equippedSlot = equippedSlotOfItem(item);
+    if (equippedSlot) {
       const equipped = document.createElement("span");
       equipped.className = "equipped";
-      equipped.textContent = " 装備中";
+      equipped.textContent = equippedSlot === "shield" ? " 装備中(盾)" : " 装備中(武器)";
       li.appendChild(equipped);
     }
 
@@ -3744,7 +4065,18 @@ if (debug.enabled) {
   window.GORO_DUNGEON_DEBUG_SNAPSHOT = () => ({
     floor: state.floor,
     map: state.map.map((row) => row.slice()),
-    player: { x: state.player.x, y: state.player.y, hp: state.player.hp, maxHp: state.player.maxHp },
+    player: {
+      x: state.player.x,
+      y: state.player.y,
+      hp: state.player.hp,
+      maxHp: state.player.maxHp,
+      hunger: state.player.hunger,
+      maxHunger: state.player.maxHunger,
+      attackPower: playerAttackPower(),
+      defensePower: playerDefensePower(),
+      equipment: { ...state.player.equipment },
+      inventory: state.player.inventory.map((item) => ({ ...item })),
+    },
     stairs: { ...state.stairs },
     enemies: state.enemies.map((enemy) => ({
       x: enemy.x,
@@ -3755,6 +4087,7 @@ if (debug.enabled) {
       exp: enemy.exp,
       name: enemy.name,
       sprite: enemy.sprite,
+      tags: (enemy.tags || []).slice(),
       encounterRank: enemy.encounterRank,
       rewardProfile: enemy.rewardProfile,
     })),
