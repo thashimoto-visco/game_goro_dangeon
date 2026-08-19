@@ -165,6 +165,8 @@
 
 優先度: 中
 
+状態: 最小実装完了
+
 狙い:
 
 現在の武器、食料、回復薬だけでは判断の幅が少ない。ローグライクらしい選択肢を増やす。
@@ -192,6 +194,12 @@
 備考:
 
 Phase 7の持ち物メニューがあるため、ここからアイテム種別を増やしやすい。
+
+完了メモ:
+
+- 詳細: `prot2_topic5/topic5-completion-handoff.md`
+- 実装済み: アイテムカタログ分離、盾スロット、装備強化値、巻物2種、投げる、満腹度最大値、敵特効レア武器、説明文2行化。
+- 状態異常回復薬と杖は、状態異常が入るTopic 6へ回した。
 
 ## Topic 6: 状態異常と敵AI
 
@@ -293,9 +301,13 @@ Phase 7の持ち物メニューがあるため、ここからアイテム種別�
 
 ## 次に詳細化する候補
 
-次に詳細プラン化するなら、以下がよい。
+次に詳細プラン化するなら、Topic 6「状態異常と敵AI」がよい。
 
-- `graphics-standardization-plan.md`
-- `event-room-plan.md`
+Topic 5でアイテム側の器はできたため、状態異常を入れれば、状態異常回復薬と杖をそのまま既存のカタログへ足せる。まず毒と鈍足の2つに絞り、敵AIの共通インターフェースと合わせて設計する。
 
-優先は `graphics-standardization-plan.md`。Topic 1でローグライク基礎が固まったため、次は素材、タイル、敵、UIの見た目基準を揃える。
+過去に詳細化済みのプラン:
+
+- `prot2_topic2/graphics-standardization-plan.md`
+- `prot2_topic3/event-room-plan.md`
+- `prot2_Topic4/strong-enemy-floor-pacing-plan.md`
+- `prot2_topic5/item-system-expansion-plan.md`

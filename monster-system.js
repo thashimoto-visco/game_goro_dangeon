@@ -85,6 +85,7 @@
     const types = catalog.map((monster) => ({
       key: monster.key,
       name: monster.name,
+      tags: Array.isArray(monster.tags) ? monster.tags.slice() : [],
       ...monster.stats,
     }));
 
@@ -118,6 +119,7 @@
         exp: Math.max(1, Math.round(type.exp * (multiplier.exp || 1))),
         name: type.name,
         sprite: type.key,
+        tags: Array.isArray(type.tags) ? type.tags.slice() : [],
         encounterRank: options.encounterRank || "normal",
         encounterId: options.encounterId || null,
         encounterMessages: { ...(options.encounterMessages || {}) },
