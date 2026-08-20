@@ -5,15 +5,21 @@
     const isSameRoom = options.isSameRoom;
     const roomsOverlap = options.roomsOverlap;
 
-    function selectRooms({ rooms, startRoom, stairRoom, table, nextId }) {
+    function selectRooms({ rooms, startRoom, stairRoom, table, nextId, roomRequirements = {} }) {
+      if (!table) {
+        return { eventRooms: [], nextId };
+      }
       if (rng(1, 100) > table.chance) {
         return { eventRooms: [], nextId };
       }
 
+      const minRoomW = Number.isFinite(roomRequirements.minRoomW) ? roomRequirements.minRoomW : 6;
+      const minRoomH = Number.isFinite(roomRequirements.minRoomH) ? roomRequirements.minRoomH : 5;
+
       const candidates = rooms.filter((room) => {
         if (isSameRoom(room, startRoom) || isSameRoom(room, stairRoom)) return false;
         if (roomsOverlap(room, startRoom) || roomsOverlap(room, stairRoom)) return false;
-        return room.w >= 6 && room.h >= 5;
+        return room.w >= minRoomW && room.h >= minRoomH;
       });
       if (candidates.length === 0) {
         return { eventRooms: [], nextId };

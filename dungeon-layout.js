@@ -7,12 +7,57 @@
     { dx: 0, dy: 1 },
     { dx: 0, dy: -1 },
   ];
+  const DEFAULT_GENERATION = {
+    rooms: { count: [6, 7], width: [5, 9], height: [4, 7], padding: 3 },
+    featureRooms: null,
+    extraConnectionChance: 65,
+    stairDistanceRatio: 0.6,
+  };
+
+  function rangeOrFallback(value, fallback) {
+    return Array.isArray(value) && value.length >= 2 ? [value[0], value[1]] : fallback.slice();
+  }
+
+  function normalizeGeneration(generation, fallback = DEFAULT_GENERATION) {
+    const source = generation || {};
+    const fallbackRooms = fallback.rooms || DEFAULT_GENERATION.rooms;
+    const sourceRooms = source.rooms || {};
+    const fallbackFeatureRooms = fallback.featureRooms || null;
+    const sourceFeatureRooms = Object.prototype.hasOwnProperty.call(source, "featureRooms")
+      ? source.featureRooms
+      : fallbackFeatureRooms;
+
+    return {
+      rooms: {
+        count: rangeOrFallback(sourceRooms.count, fallbackRooms.count),
+        width: rangeOrFallback(sourceRooms.width, fallbackRooms.width),
+        height: rangeOrFallback(sourceRooms.height, fallbackRooms.height),
+        padding: Number.isFinite(sourceRooms.padding) ? sourceRooms.padding : fallbackRooms.padding,
+      },
+      featureRooms: sourceFeatureRooms
+        ? {
+            count: Array.isArray(sourceFeatureRooms.count)
+              ? rangeOrFallback(sourceFeatureRooms.count, [1, 1])
+              : sourceFeatureRooms.count || 1,
+            width: rangeOrFallback(sourceFeatureRooms.width, [15, 19]),
+            height: rangeOrFallback(sourceFeatureRooms.height, [9, 12]),
+          }
+        : null,
+      extraConnectionChance: Number.isFinite(source.extraConnectionChance)
+        ? source.extraConnectionChance
+        : fallback.extraConnectionChance,
+      stairDistanceRatio: Number.isFinite(source.stairDistanceRatio)
+        ? source.stairDistanceRatio
+        : fallback.stairDistanceRatio,
+    };
+  }
 
   function createBuilder(options) {
     const cols = options.cols;
     const rows = options.rows;
     const rng = options.rng;
     const clamp = options.clamp;
+    const baseGeneration = normalizeGeneration(options.generation);
 
     function inBounds(x, y) {
       return x >= 0 && y >= 0 && x < cols && y < rows;
@@ -49,23 +94,38 @@
       );
     }
 
-    function createRoom(id) {
-      const w = rng(5, 9);
-      const h = rng(4, 7);
+    function createRoom(id, dimensions, feature = false) {
+      const w = rng(dimensions.width[0], dimensions.width[1]);
+      const h = rng(dimensions.height[0], dimensions.height[1]);
       const x = rng(2, cols - w - 3);
       const y = rng(2, rows - h - 3);
-      return { id, x, y, w, h, cx: x + Math.floor(w / 2), cy: y + Math.floor(h / 2), doorways: [] };
+      const room = { id, x, y, w, h, cx: x + Math.floor(w / 2), cy: y + Math.floor(h / 2), doorways: [] };
+      if (feature) room.feature = true;
+      return room;
     }
 
-    function buildRooms() {
+    function buildRooms(generation) {
       const rooms = [];
-      const targetCount = rng(6, 7);
+      const targetCount = rng(generation.rooms.count[0], generation.rooms.count[1]);
       let attempts = 0;
+
+      if (generation.featureRooms) {
+        const featureCount = Array.isArray(generation.featureRooms.count)
+          ? rng(generation.featureRooms.count[0], generation.featureRooms.count[1])
+          : generation.featureRooms.count;
+        while (rooms.length < Math.min(featureCount, targetCount) && attempts < 260) {
+          attempts += 1;
+          const room = createRoom(rooms.length + 1, generation.featureRooms, true);
+          if (rooms.some((entry) => roomsOverlapWithPadding(room, entry, generation.rooms.padding))) continue;
+          rooms.push(room);
+        }
+        if (rooms.length < Math.min(featureCount, targetCount)) return [];
+      }
 
       while (rooms.length < targetCount && attempts < 260) {
         attempts += 1;
-        const room = createRoom(rooms.length + 1);
-        if (rooms.some((entry) => roomsOverlapWithPadding(room, entry, 3))) continue;
+        const room = createRoom(rooms.length + 1, generation.rooms);
+        if (rooms.some((entry) => roomsOverlapWithPadding(room, entry, generation.rooms.padding))) continue;
         rooms.push(room);
       }
 
@@ -230,8 +290,8 @@
       tileKinds[toDoor.y][toDoor.x] = "doorway";
     }
 
-    function addOptionalConnections(map, tileKinds, rooms, corridors, doorways) {
-      if (rooms.length < 4 || rng(1, 100) > 65) return;
+    function addOptionalConnections(map, tileKinds, rooms, corridors, doorways, generation) {
+      if (rooms.length < 4 || rng(1, 100) > generation.extraConnectionChance) return;
 
       const pairs = [];
       for (let fromIndex = 0; fromIndex < rooms.length; fromIndex++) {
@@ -265,13 +325,15 @@
       return distances;
     }
 
-    function chooseStartAndStairRooms(rooms, corridors) {
-      if (rooms.length <= 2) return rooms;
+    function chooseStartAndStairRooms(rooms, corridors, generation) {
+      if (rooms.length <= 2 && rooms.every((room) => !room.feature)) return rooms;
 
-      const startRoom = rooms[rng(0, rooms.length - 1)];
+      const regularStartCandidates = rooms.filter((room) => !room.feature);
+      const startPool = regularStartCandidates.length > 0 ? regularStartCandidates : rooms;
+      const startRoom = startPool[rng(0, startPool.length - 1)];
       const distances = roomDistances(startRoom, rooms, corridors);
       const maxDistance = Math.max(...distances.values());
-      const minimumDistance = Math.max(2, Math.ceil(maxDistance * 0.6));
+      const minimumDistance = Math.max(2, Math.ceil(maxDistance * generation.stairDistanceRatio));
       const stairCandidates = rooms.filter((room) => (distances.get(room.id) || 0) >= minimumDistance);
       const stairPool = stairCandidates.length > 0 ? stairCandidates : rooms.filter((room) => room !== startRoom);
       const stairRoom = stairPool[rng(0, stairPool.length - 1)];
@@ -279,7 +341,7 @@
       return [startRoom, ...middleRooms, stairRoom];
     }
 
-    function connectRooms(map, tileKinds, rooms) {
+    function connectRooms(map, tileKinds, rooms, generation) {
       const corridors = [];
       const doorways = [];
       rooms.sort((a, b) => a.cx - b.cx || a.cy - b.cy);
@@ -290,7 +352,7 @@
         connectRoomPair(map, tileKinds, corridors, doorways, fromRoom, toRoom);
       }
 
-      addOptionalConnections(map, tileKinds, rooms, corridors, doorways);
+      addOptionalConnections(map, tileKinds, rooms, corridors, doorways, generation);
 
       return { corridors, doorways };
     }
@@ -327,21 +389,23 @@
       return walkableCount === reachableCount;
     }
 
-    function buildCandidateLayout() {
+    function buildCandidateLayout(generation) {
       const map = createEmptyMap();
       const tileKinds = createEmptyTileKinds();
-      const rooms = buildRooms();
+      const rooms = buildRooms(generation);
+
+      if (rooms.length < 2) return null;
 
       for (const room of rooms) {
         carveRoom(map, tileKinds, room);
       }
 
-      const { corridors, doorways } = connectRooms(map, tileKinds, rooms);
-      const orderedRooms = chooseStartAndStairRooms(rooms, corridors);
+      const { corridors, doorways } = connectRooms(map, tileKinds, rooms, generation);
+      const orderedRooms = chooseStartAndStairRooms(rooms, corridors, generation);
       return { map, tileKinds, rooms: orderedRooms, corridors, doorways };
     }
 
-    function buildFallbackLayout() {
+    function buildFallbackLayout(generation) {
       const map = createEmptyMap();
       const tileKinds = createEmptyTileKinds();
       const rooms = [
@@ -353,7 +417,7 @@
         carveRoom(map, tileKinds, room);
       }
 
-      const { corridors, doorways } = connectRooms(map, tileKinds, rooms);
+      const { corridors, doorways } = connectRooms(map, tileKinds, rooms, generation);
       const layout = { map, tileKinds, rooms, corridors, doorways };
       if (!floorLayoutIsValid(layout)) {
         throw new Error("fallback dungeon layout is invalid");
@@ -361,12 +425,15 @@
       return layout;
     }
 
-    function buildFloorLayout(maxAttempts = 12) {
+    function buildFloorLayout(optionsOrMaxAttempts = {}) {
+      const callOptions = typeof optionsOrMaxAttempts === "number" ? { maxAttempts: optionsOrMaxAttempts } : optionsOrMaxAttempts;
+      const generation = normalizeGeneration(callOptions.generation, baseGeneration);
+      const maxAttempts = Number.isFinite(callOptions.maxAttempts) ? callOptions.maxAttempts : 12;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const candidate = buildCandidateLayout();
+        const candidate = buildCandidateLayout(generation);
         if (floorLayoutIsValid(candidate)) return candidate;
       }
-      return buildFallbackLayout();
+      return buildFallbackLayout(generation);
     }
 
     return {

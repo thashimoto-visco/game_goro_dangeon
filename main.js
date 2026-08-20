@@ -191,6 +191,7 @@ const debugStartFloor = Number.parseInt(debugParams.get("floor"), 10);
 const debug = {
   enabled: debugHostAllowed && debugParams.get("debug") === "1",
   startFloor: Number.isInteger(debugStartFloor) && debugStartFloor >= 1 && debugStartFloor <= 99 ? debugStartFloor : null,
+  themeKey: debugParams.get("theme") || null,
   encounterStart: debugParams.get("encounter") === "1",
   loadout: debugParams.get("loadout") === "1",
   structureOverlay: false,
@@ -241,6 +242,49 @@ function buildItemSpawnTables(tables, fallbackCount) {
 }
 
 const floorItemTables = buildItemSpawnTables(window.GORO_DUNGEON_ITEM_SPAWN_TABLES, [3, 5]);
+
+const floorThemeCatalog = Array.isArray(window.GORO_DUNGEON_FLOOR_THEME_CATALOG)
+  ? window.GORO_DUNGEON_FLOOR_THEME_CATALOG.filter((theme) => theme?.key)
+  : [];
+const floorThemeTables = Array.isArray(window.GORO_DUNGEON_FLOOR_THEME_TABLES)
+  ? window.GORO_DUNGEON_FLOOR_THEME_TABLES
+  : [];
+const standardFloorTheme = floorThemeCatalog.find((theme) => theme.key === "standard");
+if (!standardFloorTheme) {
+  throw new Error("標準フロアテーマ standard を読み込めません。");
+}
+
+function normalizeFloorTheme(theme) {
+  const source = theme || standardFloorTheme;
+  return {
+    ...standardFloorTheme,
+    ...source,
+    generation: {
+      ...standardFloorTheme.generation,
+      ...(source.generation || {}),
+      rooms: {
+        ...standardFloorTheme.generation.rooms,
+        ...(source.generation?.rooms || {}),
+      },
+    },
+    eventRoom: {
+      ...standardFloorTheme.eventRoom,
+      ...(source.eventRoom || {}),
+    },
+  };
+}
+
+function floorThemeByKey(key) {
+  return normalizeFloorTheme(floorThemeCatalog.find((theme) => theme.key === key) || standardFloorTheme);
+}
+
+function selectFloorTheme(floor) {
+  if (debug.enabled && debug.themeKey) return floorThemeByKey(debug.themeKey);
+  const table = tableForFloor(floorThemeTables, floor, { fallbackToLast: false });
+  const candidates = (table?.entries || []).filter((entry) => entry?.theme && entry.weight > 0);
+  const entry = candidates.length === 1 ? candidates[0] : weightedPickEntry(candidates);
+  return floorThemeByKey(entry?.theme);
+}
 
 const floorEventTables = [
   {
@@ -417,6 +461,7 @@ const ui = {
 
 const state = {
   floor: 1,
+  floorTheme: null,
   map: [],
   tileKinds: [],
   rooms: [],
@@ -600,6 +645,12 @@ function weightedPickEntry(entries) {
   }
 
   return candidates[0];
+}
+
+function scaledSpawnCount(countRange, scale = 1) {
+  const baseCount = rng(countRange[0], countRange[1]);
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  return Math.max(1, Math.round(baseCount * safeScale));
 }
 
 function monsterTypeByKey(key) {
@@ -1513,6 +1564,15 @@ function updateVisibilityFade(delta) {
 }
 
 function floorDarknessTint() {
+  const themeTint = state.floorTheme?.darkness;
+  if (
+    themeTint &&
+    Number.isFinite(themeTint.r) &&
+    Number.isFinite(themeTint.g) &&
+    Number.isFinite(themeTint.b)
+  ) {
+    return themeTint;
+  }
   if (state.floor >= 7) return { r: 26, g: 4, b: 9 };
   if (state.floor >= 4) return { r: 12, g: 4, b: 24 };
   return { r: 3, g: 7, b: 18 };
@@ -1601,6 +1661,7 @@ function selectNormalEventRooms(rooms, startRoom, stairRoom) {
     stairRoom,
     table: eventTableForCurrentFloor(),
     nextId: nextEventId,
+    roomRequirements: state.floorTheme?.eventRoom,
   });
   state.eventRooms = result.eventRooms;
   nextEventId = result.nextId;
@@ -1624,12 +1685,13 @@ function placeEventObjects() {
   nextEventId = result.nextId;
 }
 
-function buildFloorLayout() {
-  return dungeonLayoutBuilder.buildFloorLayout();
+function buildFloorLayout(theme) {
+  return dungeonLayoutBuilder.buildFloorLayout({ generation: theme.generation });
 }
 
 function generateFloor() {
-  const layout = buildFloorLayout();
+  state.floorTheme = selectFloorTheme(state.floor);
+  const layout = buildFloorLayout(state.floorTheme);
 
   state.map = layout.map;
   state.tileKinds = layout.tileKinds;
@@ -1741,7 +1803,7 @@ function placeEnemies(rooms) {
   const candidates = rooms
     .slice(1)
     .filter((room) => !state.specialEncounter || !isSameRoom(room, state.specialEncounter.room));
-  const count = rng(table.count[0], table.count[1]);
+  const count = scaledSpawnCount(table.count, state.floorTheme?.enemyCountScale);
   let attempts = 0;
 
   while (state.enemies.length < count && attempts < 160 && candidates.length > 0) {
@@ -1866,7 +1928,7 @@ function placeItems(rooms) {
   const candidates = rooms
     .slice(1)
     .filter((room) => !state.specialEncounter || !isSameRoom(room, state.specialEncounter.room));
-  const count = rng(table.count[0], table.count[1]);
+  const count = scaledSpawnCount(table.count, state.floorTheme?.itemCountScale);
   let attempts = 0;
 
   while (state.items.length < count && attempts < 120 && candidates.length > 0) {
@@ -2588,6 +2650,7 @@ function useInventorySlot(slotIndex) {
 
 function resetPlayerRunState() {
   state.floor = 1;
+  state.floorTheme = null;
   state.items = [];
   state.eventRooms = [];
   state.eventObjects = [];
@@ -2671,6 +2734,9 @@ function updateFloorTransition(delta) {
     playSound("stairs");
     addLog(`${state.floor}Fへ進んだ。`);
     generateFloor();
+    if (state.floorTheme?.arrivalText) {
+      addLog(`【${state.floorTheme.name}】${state.floorTheme.arrivalText}`);
+    }
   }
 
   const total = floorTransition.fadeOut + floorTransition.hold + floorTransition.fadeIn;
@@ -4111,9 +4177,17 @@ function drawFloorTransitionLayer() {
   ctx.lineTo(centerX + 90, centerY + rise + 34);
   ctx.stroke();
 
+  ctx.font = "bold 15px 'Yu Gothic UI', sans-serif";
+  ctx.fillStyle = "rgba(226, 197, 107, 0.92)";
+  ctx.fillText(state.floorTheme?.name || standardFloorTheme.name, centerX, centerY + rise + 50);
+
   ctx.font = "12px 'Yu Gothic UI', sans-serif";
   ctx.fillStyle = "rgba(226, 232, 240, 0.75)";
-  ctx.fillText("さらに深く潜っていく……", centerX, centerY + rise + 52);
+  ctx.fillText(
+    state.floorTheme?.arrivalText || standardFloorTheme.arrivalText,
+    centerX,
+    centerY + rise + 70
+  );
   ctx.restore();
 }
 
@@ -4376,7 +4450,11 @@ if (debug.enabled) {
   if (debug.startFloor !== null) state.floor = debug.startFloor;
   window.GORO_DUNGEON_DEBUG_SNAPSHOT = () => ({
     floor: state.floor,
+    floorTheme: state.floorTheme
+      ? { key: state.floorTheme.key, name: state.floorTheme.name, arrivalText: state.floorTheme.arrivalText }
+      : null,
     map: state.map.map((row) => row.slice()),
+    rooms: state.rooms.map((room) => ({ ...room, doorways: room.doorways.slice() })),
     player: {
       x: state.player.x,
       y: state.player.y,
@@ -4391,6 +4469,14 @@ if (debug.enabled) {
       statuses: state.player.statuses.map((status) => ({ ...status })),
     },
     stairs: { ...state.stairs },
+    items: state.items.map((item) => ({ ...item })),
+    eventRooms: state.eventRooms.map((eventRoom) => ({
+      id: eventRoom.id,
+      type: eventRoom.type,
+      room: { ...eventRoom.room, doorways: eventRoom.room.doorways.slice() },
+      discovered: Boolean(eventRoom.discovered),
+    })),
+    eventObjects: state.eventObjects.map((object) => ({ ...object })),
     enemies: state.enemies.map((enemy) => ({
       x: enemy.x,
       y: enemy.y,
