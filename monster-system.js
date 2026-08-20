@@ -86,6 +86,10 @@
       key: monster.key,
       name: monster.name,
       tags: Array.isArray(monster.tags) ? monster.tags.slice() : [],
+      ai: monster.ai || "chase",
+      onHitStatus: monster.onHitStatus ? { ...monster.onHitStatus } : null,
+      rangedRange: monster.rangedRange || 0,
+      rangedAtk: monster.rangedAtk || 0,
       ...monster.stats,
     }));
 
@@ -120,6 +124,19 @@
         name: type.name,
         sprite: type.key,
         tags: Array.isArray(type.tags) ? type.tags.slice() : [],
+        statuses: [],
+        ai: options.ai || type.ai || "chase",
+        onHitStatus: options.onHitStatus
+          ? { ...options.onHitStatus }
+          : type.onHitStatus
+            ? { ...type.onHitStatus }
+            : null,
+        rangedRange: options.rangedRange || type.rangedRange || 0,
+        rangedAtk:
+          options.rangedAtk ||
+          (type.rangedAtk
+            ? Math.max(1, Math.round((type.rangedAtk + floorBonus * type.atkScale) * (multiplier.atk || 1)))
+            : 0),
         encounterRank: options.encounterRank || "normal",
         encounterId: options.encounterId || null,
         encounterMessages: { ...(options.encounterMessages || {}) },

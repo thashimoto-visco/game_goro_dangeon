@@ -7,9 +7,10 @@
       maxFloor: 3,
       count: [4, 5],
       entries: [
-        { type: "slime", weight: 50 },
-        { type: "bat", weight: 40 },
+        { type: "slime", weight: 40 },
+        { type: "bat", weight: 30 },
         { type: "golem", weight: 10 },
+        { type: "poisonLizard", weight: 20 },
       ],
     },
     {
@@ -17,9 +18,11 @@
       maxFloor: 4,
       count: [5, 6],
       entries: [
-        { type: "slime", weight: 35 },
-        { type: "bat", weight: 45 },
-        { type: "golem", weight: 20 },
+        { type: "slime", weight: 25 },
+        { type: "bat", weight: 30 },
+        { type: "golem", weight: 15 },
+        { type: "poisonLizard", weight: 20 },
+        { type: "puffMushroom", weight: 10 },
       ],
     },
     {
@@ -27,9 +30,11 @@
       maxFloor: 99,
       count: [5, 7],
       entries: [
-        { type: "slime", weight: 20 },
-        { type: "bat", weight: 45 },
-        { type: "golem", weight: 35 },
+        { type: "slime", weight: 15 },
+        { type: "bat", weight: 25 },
+        { type: "golem", weight: 25 },
+        { type: "poisonLizard", weight: 20 },
+        { type: "puffMushroom", weight: 15 },
       ],
     },
   ];

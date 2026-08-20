@@ -75,6 +75,15 @@
       flavor: "噛むと苦い。傷にはよく効く。",
     },
     {
+      key: "cureHerb",
+      name: "なおし草",
+      kind: "potion",
+      icon: "potion",
+      cureAll: true,
+      throwPower: 2,
+      flavor: "青い香りが鼻を抜ける。体の悪いものが薄れていく。",
+    },
+    {
       key: "enhanceScroll",
       name: "強化の巻物",
       kind: "scroll",
@@ -94,6 +103,17 @@
       description: "同じ部屋の敵に{power}ダメージ",
       throwPower: 1,
       flavor: "天井のないはずのない場所に、雷が落ちる。",
+    },
+    {
+      key: "sleepWand",
+      name: "眠りの杖",
+      kind: "wand",
+      icon: "wand",
+      effect: "sleep",
+      uses: 3,
+      description: "直線上の敵1体を5ターン眠らせる",
+      throwPower: 3,
+      flavor: "先端の紫水晶を見ていると、まぶたが重くなる。",
     },
   ];
 })();

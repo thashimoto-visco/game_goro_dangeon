@@ -28,6 +28,10 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 21. いかずちの巻物を読むと、同じ部屋の敵にまとめてダメージが入る。
 22. 大きなおにぎりを食べると、満腹度の最大値が上がる（上限150）。
 23. 悪魔斬りの剣は、悪魔タグを持つ敵に大きなダメージを与える。
+24. 3F以降のどくトカゲは、攻撃時に30%で毒を与える。毒は8ターン、毎ターン1ダメージを与え、その間は自然回復を止める。
+25. 4F以降のぷくぷくキノコは、直線4マス以内にいる吾郎へ胞子弾を撃ち、隣接されると距離を取る。
+26. なおし草は状態異常をすべて治す。
+27. 眠りの杖は、向いている方向の直線6マス以内にいる最初の敵を5ターン眠らせる。残り回数は表示名の `[3]` で確認でき、0回の杖を振ろうとしてもターンは進まない。
 
 ## 仕様（現状）
 
@@ -40,7 +44,7 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 - ダメージを受けた敵の頭上HPバー（残量で色が変化）
 - 敵が視界に入った瞬間の「！」マーク、遭遇SE、出現ログ（視認中の敵は動きが速くなる）
 - 低HP時に画面端が赤く脈動する警告ビネット
-- 床アイテム、9枠の持ち物、武器/盾/食料/薬/巻物の5種別
+- 床アイテム、9枠の持ち物、武器/盾/食料/薬/巻物/杖の6種別
 - 武器と盾の独立した装備スロット（同じものを選び直すと解除）
 - 持ち物メニューで使用、装備、投げる、足元に置く操作
 - 種別ラベル、強化後の実数値、フレーバー文を出す2行の説明欄
@@ -50,6 +54,13 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 - 持ち物を向いている方向へ投げる操作（最大6マス、命中で消費、外れると落下）
 - 満腹度の最大値と、それを上げる食料
 - モンスターのタグと、タグに対する特効を持つレア武器
+- 毒と眠りを同じデータ形式で扱う状態異常システム
+- プレイヤーの状態欄（残りターン付き）と、敵頭上の状態異常マーク
+- 毒による継続ダメージ、自然回復停止、専用死因
+- 敵にも共通形式で状態異常を付与できる仕組みと、stoneタグの毒耐性（現状、敵へ毒を与えるプレイ手段はない）
+- ダメージで解除される眠りと、残り3回の眠りの杖
+- 既存追跡AIと、射線・射程・退避判断を持つ遠距離AI
+- 3F以降のどくトカゲと、4F以降のぷくぷくキノコ
 - 敵ごとの経験値、プレイヤーレベル、経験値テーブル
 - レベルアップ時の最大HP/攻撃/守備上昇とHP全回復
 - レベル、経験値、次レベルまでのステータス表示
@@ -89,9 +100,9 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 
 ## アイテムの追加方法
 
-アイテム定義は `item-catalog.js`、種別ごとの挙動は `item-system.js`、出現配分は `dungeon-item-tables.js` にあります。`main.js` はアイテム個別の知識を持ちません。
+アイテム定義は `item-catalog.js`、種別ごとの共通情報は `item-system.js`、出現配分は `dungeon-item-tables.js` にあります。
 
-新しいアイテムを足す場合は、`item-catalog.js` へ1件追加し、`dungeon-item-tables.js` の出現表へ入れます。既存の5種別（`weapon` / `shield` / `food` / `potion` / `scroll`）であれば `main.js` の変更は不要です。
+新しいアイテムを足す場合は、`item-catalog.js` へ1件追加し、`dungeon-item-tables.js` の出現表へ入れます。既存の6種別（`weapon` / `shield` / `food` / `potion` / `scroll` / `wand`）の共通表示は `item-system.js` で処理されます。
 
 ```js
 {
@@ -108,6 +119,19 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 新しい種別を足す場合は、`item-system.js` の `KIND_PROFILES` に操作ラベルと装備スロットを追加し、`main.js` の `useInventorySlot()` に使用処理を1つ足します。
 
 テストは `node tests/item-system-tests.js` で、出現表の全 `type` がカタログに存在することまで確認します。
+
+## 状態異常と敵AIの追加方法
+
+状態異常の数値・表示・解除条件は `status-catalog.js`、付与・経過・解除判定は `status-system.js` にあります。新しい状態異常は、既存フラグで表現できる範囲ならカタログへ1件足せます。
+
+敵の判断は `monster-ai.js` が `wait` / `move` / `melee` / `ranged` のintentを返し、`main.js` が実行します。既存intentで表現できるAIなら、`monster-ai.js` のbehavior追加とモンスター定義の `ai` 指定だけで追加できます。
+
+関連テスト:
+
+- `node tests/status-system-tests.js`
+- `node tests/monster-ai-tests.js`
+- `node tests/monster-system-tests.js`
+- `node tests/item-system-tests.js`
 
 ## 配信時のアセットパス
 
