@@ -40,6 +40,14 @@
       consumable: true,
       throwPower: 1,
     },
+    wand: {
+      label: "杖",
+      actionLabel: "振る",
+      equipSlot: null,
+      upgradable: false,
+      consumable: false,
+      throwPower: 3,
+    },
   };
 
   const DEFAULT_KIND_PROFILE = {
@@ -106,13 +114,15 @@
       return definitions[key] || fallbackDefinition;
     }
 
-    // Accepts either an item instance ({ type, upgrade }) or a bare catalog key.
+    // Accepts either an item instance ({ type, upgrade, uses }) or a bare catalog key.
     function resolve(itemOrKey) {
       if (itemOrKey && typeof itemOrKey === "object") {
         const definition = definitionByKey(itemOrKey.type);
-        return { definition, upgrade: clampUpgrade(itemOrKey.type, itemOrKey.upgrade || 0) };
+        const uses = Number.isFinite(itemOrKey.uses) ? Math.max(0, Math.floor(itemOrKey.uses)) : definition.uses;
+        return { definition, upgrade: clampUpgrade(itemOrKey.type, itemOrKey.upgrade || 0), uses };
       }
-      return { definition: definitionByKey(itemOrKey), upgrade: 0 };
+      const definition = definitionByKey(itemOrKey);
+      return { definition, upgrade: 0, uses: definition.uses };
     }
 
     function clampUpgrade(key, value) {
@@ -143,8 +153,9 @@
     }
 
     function displayName(itemOrKey) {
-      const { definition, upgrade } = resolve(itemOrKey);
-      return upgrade > 0 ? `${definition.name}+${upgrade}` : definition.name;
+      const { definition, upgrade, uses } = resolve(itemOrKey);
+      const upgradedName = upgrade > 0 ? `${definition.name}+${upgrade}` : definition.name;
+      return definition.kind === "wand" ? `${upgradedName}[${uses ?? 0}]` : upgradedName;
     }
 
     function attackBonus(itemOrKey) {
@@ -182,7 +193,11 @@
     }
 
     function effectText(itemOrKey) {
-      const { definition } = resolve(itemOrKey);
+      const { definition, uses } = resolve(itemOrKey);
+      if (definition.kind === "wand") {
+        const effect = definition.description ? fillTemplate(definition.description, definition) : "不思議な力を放つ";
+        return `${effect} / 残り${uses ?? 0}回`;
+      }
       if (definition.description) return fillTemplate(definition.description, definition);
 
       if (definition.kind === "weapon") {
@@ -197,6 +212,7 @@
         return definition.hungerMax ? `${base} / 最大+${definition.hungerMax}` : base;
       }
       if (definition.kind === "potion") {
+        if (definition.cureAll) return "状態異常をすべて治す";
         return `HP+${definition.heal || 0}`;
       }
       return "効果不明";

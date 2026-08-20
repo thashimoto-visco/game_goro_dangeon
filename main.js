@@ -24,6 +24,7 @@ const ITEM_DRAW = {
     food: "rgba(248, 250, 252, 0.18)",
     potion: "rgba(34, 197, 94, 0.2)",
     scroll: "rgba(251, 146, 60, 0.22)",
+    wand: "rgba(196, 181, 253, 0.24)",
   },
 };
 const HUNGER_BASE_MAX = 100;
@@ -44,6 +45,16 @@ if (!window.GORO_DUNGEON_MONSTERS || typeof window.GORO_DUNGEON_MONSTERS.createS
 const monsterSystem = window.GORO_DUNGEON_MONSTERS.createSystem(window.GORO_DUNGEON_MONSTER_CATALOG);
 const monsterCatalog = monsterSystem.catalog;
 const monsterTypes = monsterSystem.types;
+
+if (!window.GORO_DUNGEON_STATUSES || typeof window.GORO_DUNGEON_STATUSES.createSystem !== "function") {
+  throw new Error("必要な状態異常システム GORO_DUNGEON_STATUSES.createSystem を読み込めません。");
+}
+const statusSystem = window.GORO_DUNGEON_STATUSES.createSystem(window.GORO_DUNGEON_STATUS_CATALOG);
+
+if (!window.GORO_DUNGEON_MONSTER_AI || typeof window.GORO_DUNGEON_MONSTER_AI.decide !== "function") {
+  throw new Error("必要な敵AI GORO_DUNGEON_MONSTER_AI.decide を読み込めません。");
+}
+const monsterAi = window.GORO_DUNGEON_MONSTER_AI;
 
 if (!window.GORO_DUNGEON_ITEMS || typeof window.GORO_DUNGEON_ITEMS.createSystem !== "function") {
   throw new Error("必要なアイテムシステム GORO_DUNGEON_ITEMS.createSystem を読み込めません。");
@@ -98,6 +109,7 @@ const images = {
     food: createImage("assets/icons/item_food.svg"),
     potion: createImage("assets/icons/item_potion.svg"),
     scroll: createImage("assets/icons/item_scroll.svg"),
+    wand: null,
   },
   monsters: Object.fromEntries(
     monsterCatalog.map((monster) => [monster.key, monster.asset ? createImage(monster.asset) : null])
@@ -161,6 +173,7 @@ const sprites = {
     food: { image: images.icons.food },
     potion: { image: images.icons.potion },
     scroll: { image: images.icons.scroll },
+    wand: { image: images.icons.wand },
   },
   monsters: Object.fromEntries(monsterCatalog.map((monster) => [monster.key, { image: images.monsters[monster.key] }])),
 };
@@ -314,12 +327,14 @@ const eventObjectTypes = {
 
 const defeatReasons = {
   hunger: "吾郎は空腹で倒れた",
+  poison: "吾郎は毒に倒れた",
   fallbackEnemy: "吾郎は力尽きた",
 };
 
 let nextItemId = 1;
 let nextEventId = 1;
 let inventoryRenderKey = "";
+let statusRenderKey = null;
 
 const effects = [];
 
@@ -392,6 +407,7 @@ const ui = {
   def: document.getElementById("def"),
   hunger: document.getElementById("hunger"),
   exp: document.getElementById("exp"),
+  status: document.getElementById("status"),
   weapon: document.getElementById("weapon"),
   shield: document.getElementById("shield"),
   inventory: document.getElementById("inventory"),
@@ -447,6 +463,7 @@ const state = {
     inventoryLimit: 9,
     inventory: [],
     equipment: { weapon: null, shield: null },
+    statuses: [],
     motion: null,
     hitTime: 0,
     hitDuration: 0,
@@ -606,6 +623,74 @@ function applyNaturalRecovery() {
   state.player.hp = Math.min(state.player.maxHp, state.player.hp + 1);
   addFloatingText("+1", state.player.x, state.player.y, "#86efac");
   addLog("吾郎のHPが少し回復した。");
+}
+
+function actorStatusName(actor) {
+  return actor === state.player ? "吾郎" : actor?.name || "魔物";
+}
+
+function statusMessage(statusOrKey, kind, name) {
+  const key = typeof statusOrKey === "string" ? statusOrKey : statusOrKey?.key;
+  const template = statusSystem.definitionByKey(key)?.messages?.[kind];
+  return template ? template.replaceAll("{name}", name) : "";
+}
+
+function announceStatus(actor, key, kind) {
+  const definition = statusSystem.definitionByKey(key);
+  if (!definition) return;
+  const message = statusMessage(key, kind, actorStatusName(actor));
+  if (message) addLog(message);
+  if (kind === "apply") {
+    addFloatingText(definition.mark, actor.x, actor.y, definition.color);
+    playSound(key === "sleep" ? "sleep" : "poison");
+  }
+}
+
+function applyStatus(actor, key, options = {}) {
+  const result = statusSystem.apply(actor, key, { tags: actor?.tags, ...options });
+  if (result.applied) announceStatus(actor, key, "apply");
+  return result;
+}
+
+function clearStatusesFromDamage(actor) {
+  for (const cleared of statusSystem.onDamage(actor)) {
+    announceStatus(actor, cleared.key, "cleared");
+  }
+}
+
+function applyPlayerStatusTick() {
+  const results = statusSystem.tick(state.player);
+  for (const result of results) {
+    if (result.damage > 0 && state.player.hp > 0) {
+      state.player.hp = Math.max(0, state.player.hp - result.damage);
+      const definition = statusSystem.definitionByKey(result.key);
+      addFloatingText(`-${result.damage}`, state.player.x, state.player.y, definition?.color || "#fb7185");
+      startPlayerDamage();
+      playSound("poisonDamage");
+      clearStatusesFromDamage(state.player);
+    }
+    if (result.expired) announceStatus(state.player, result.key, "expire");
+    if (state.player.hp <= 0) {
+      handlePlayerDefeat(result.key === "poison" ? defeatReasons.poison : defeatReasons.fallbackEnemy);
+      return;
+    }
+  }
+}
+
+function applyEnemyStatusTick(enemy) {
+  const results = statusSystem.tick(enemy);
+  for (const result of results) {
+    if (result.damage > 0 && enemy.hp > 0) {
+      const definition = statusSystem.definitionByKey(result.key);
+      damageEnemy(enemy, result.damage, {
+        direction: enemy.hitDirection || "down",
+        color: definition?.color || "#fde68a",
+        log: false,
+      });
+    }
+    if (result.expired && enemy.hp > 0) announceStatus(enemy, result.key, "expire");
+    if (enemy.hp <= 0) return;
+  }
 }
 
 function gridToWorldX(x) {
@@ -846,6 +931,20 @@ function playSound(name) {
   if (name === "heartbeat") {
     playTone(72, 0.09, "sine", 0.13);
     playTone(56, 0.12, "sine", 0.11, 0.13);
+    return;
+  }
+  if (name === "poison" || name === "poisonDamage") {
+    playTone(name === "poison" ? 180 : 120, 0.1, "sawtooth", 0.07);
+    return;
+  }
+  if (name === "sleep") {
+    playTone(440, 0.08, "sine", 0.06);
+    playTone(330, 0.12, "sine", 0.05, 0.08);
+    return;
+  }
+  if (name === "ranged") {
+    playTone(620, 0.05, "triangle", 0.07);
+    playTone(420, 0.08, "sine", 0.06, 0.04);
   }
 }
 
@@ -1089,6 +1188,19 @@ function addThrowEffect(item, toX, toY) {
   });
 }
 
+function addMagicBoltEffect(from, to, color) {
+  effects.push({
+    type: "magicBolt",
+    fromX: from.x,
+    fromY: from.y,
+    x: to.x,
+    y: to.y,
+    color,
+    age: 0,
+    duration: 220,
+  });
+}
+
 function addDefeatEffect(x, y) {
   effects.push({
     type: "defeat",
@@ -1210,6 +1322,7 @@ function dropInventoryItem(index) {
     id: item.id,
     type: item.type,
     upgrade: item.upgrade || 0,
+    uses: item.uses,
     x: state.player.x,
     y: state.player.y,
   });
@@ -1720,11 +1833,15 @@ function randomItemType() {
 // Every item instance, on the floor or in the bag, is built here so that
 // individual state such as the upgrade level always travels with the item.
 function createItemInstance(type, options = {}) {
+  const definition = itemTypes[type];
   const item = {
     id: nextItemId,
     type,
     upgrade: itemSystem.clampUpgrade(type, options.upgrade || 0),
   };
+  if (definition?.kind === "wand") {
+    item.uses = Number.isFinite(options.uses) ? Math.max(0, Math.floor(options.uses)) : definition.uses || 0;
+  }
   nextItemId += 1;
   if (Number.isFinite(options.x) && Number.isFinite(options.y)) {
     item.x = options.x;
@@ -1851,6 +1968,46 @@ function handleEnemyDefeat(enemy) {
   gainExp(enemy.exp);
 }
 
+function damageEnemy(enemy, amount, options = {}) {
+  if (!enemy || enemy.hp <= 0) return { damaged: false, killed: false };
+  const damage = Math.max(0, Math.floor(amount || 0));
+  if (damage <= 0) return { damaged: false, killed: false };
+
+  enemy.hp = Math.max(0, enemy.hp - damage);
+  enemy.hitTime = 180;
+  enemy.hitDuration = 180;
+  enemy.hitDirection = options.direction || directionBetween(state.player, enemy);
+  addMonsterBurstEffect(enemy, "hit");
+  addImpactEffect(enemy.x, enemy.y);
+  addFloatingText(String(damage), enemy.x, enemy.y, options.color || "#fde68a");
+  clearStatusesFromDamage(enemy);
+  if (options.log) addLog(options.log.replaceAll("{damage}", String(damage)).replaceAll("{name}", enemy.name));
+
+  if (enemy.hp <= 0) handleEnemyDefeat(enemy);
+  return { damaged: true, killed: enemy.hp <= 0, damage };
+}
+
+function tryApplyEnemyOnHitStatus(enemy) {
+  const onHitStatus = enemy?.onHitStatus;
+  if (!onHitStatus?.key || state.player.hp <= 0) return;
+  if (rng(1, 100) > Math.max(0, onHitStatus.chance || 0)) return;
+  applyStatus(state.player, onHitStatus.key);
+}
+
+function damagePlayerFromEnemy(enemy, amount, logText) {
+  const damage = Math.max(1, Math.floor(amount || 1));
+  state.player.hp = Math.max(0, state.player.hp - damage);
+  startPlayerDamage(directionBetween(enemy, state.player));
+  addFloatingText(String(damage), state.player.x, state.player.y, "#fb7185");
+  playSound("damage");
+  startCameraShake();
+  startFlash("rgba(239,68,68,0.22)", 120);
+  addLog(logText.replaceAll("{damage}", String(damage)).replaceAll("{name}", enemy.name));
+  clearStatusesFromDamage(state.player);
+  tryApplyEnemyOnHitStatus(enemy);
+  handlePlayerDefeat(defeatReasonFromEnemy(enemy));
+}
+
 function buildPlayerAttackResult(enemy) {
   const slayerBonus = slayerBonusAgainst(enemy);
   const damage = Math.max(1, playerAttackPower() + slayerBonus + rng(0, 2));
@@ -1901,13 +2058,6 @@ function applyPlayerAttackHit(action) {
   action.appliedHit = true;
   if (!enemy || enemy.hp <= 0) return;
 
-  enemy.hp -= action.result.damage;
-  enemy.hitTime = 180;
-  enemy.hitDuration = 180;
-  enemy.hitDirection = action.direction;
-  addMonsterBurstEffect(enemy, "hit");
-  addImpactEffect(enemy.x, enemy.y);
-  addFloatingText(String(action.result.damage), enemy.x, enemy.y, "#fde68a");
   playSound(action.result.slayerBonus > 0 ? "slayer" : "hit");
   startHitStop(action.result.killed ? 130 : 60);
   startCameraShake(90, action.result.killed ? 4 : 2);
@@ -1917,11 +2067,11 @@ function applyPlayerAttackHit(action) {
     startFlash("rgba(192,132,252,0.18)", 150);
     addLog(`${itemSystem.displayName(weapon)}が${itemSystem.slayerLabelFor(weapon)}に効いた！`);
   }
-  addLog(`${enemy.name}に${action.result.damage}ダメージ。`);
+  damageEnemy(enemy, action.result.damage, {
+    direction: action.direction,
+    log: "{name}に{damage}ダメージ。",
+  });
 
-  if (enemy.hp <= 0) {
-    handleEnemyDefeat(enemy);
-  }
 }
 
 function applyEnemyCounter(action) {
@@ -1935,14 +2085,7 @@ function applyEnemyCounter(action) {
   enemy.counterDuration = 140;
   enemy.counterDirection = directionBetween(enemy, state.player);
   addMonsterBurstEffect(enemy, "attack");
-  state.player.hp -= action.result.counterDamage;
-  startPlayerDamage(directionBetween(enemy, state.player));
-  addFloatingText(String(action.result.counterDamage), state.player.x, state.player.y, "#fb7185");
-  playSound("damage");
-  startCameraShake();
-  startFlash("rgba(239,68,68,0.22)", 120);
-  addLog(`${enemy.name}の反撃！ 吾郎は${action.result.counterDamage}ダメージを受けた。`);
-  handlePlayerDefeat(defeatReasonFromEnemy(enemy));
+  damagePlayerFromEnemy(enemy, action.result.counterDamage, "{name}の反撃！ 吾郎は{damage}ダメージを受けた。");
 }
 
 function updateAction(delta) {
@@ -1969,40 +2112,90 @@ function updateAction(delta) {
   }
 }
 
+function isBlockedForEnemy(x, y, enemy) {
+  if (!isWalkable(x, y)) return true;
+  const occupant = enemyAt(x, y);
+  if (occupant && occupant !== enemy) return true;
+  const encounter = specialEncounterById(enemy?.encounterId);
+  return Boolean(encounter && !specialEncounterSystem.containsPosition(encounter, x, y));
+}
+
+function straightPathTo(from, to, range) {
+  const dx = Math.sign(to.x - from.x);
+  const dy = Math.sign(to.y - from.y);
+  if (dx !== 0 && dy !== 0) return null;
+  const distance = Math.abs(to.x - from.x) + Math.abs(to.y - from.y);
+  if (distance === 0 || distance > range) return null;
+
+  const path = [];
+  let x = from.x;
+  let y = from.y;
+  for (let step = 0; step < distance; step++) {
+    x += dx;
+    y += dy;
+    if (!isWalkable(x, y)) return null;
+    if ((x !== to.x || y !== to.y) && enemyAt(x, y)) return null;
+    path.push({ x, y });
+  }
+  return path;
+}
+
+function performEnemyMelee(enemy) {
+  const damage = Math.max(1, enemy.atk - playerDefensePower() + rng(0, 1));
+  enemy.counterTime = 140;
+  enemy.counterDuration = 140;
+  enemy.counterDirection = directionBetween(enemy, state.player);
+  addMonsterBurstEffect(enemy, "attack");
+  damagePlayerFromEnemy(enemy, damage, "{name}の攻撃！ {damage}ダメージ。");
+}
+
+function performEnemyRanged(enemy) {
+  const damage = Math.max(1, (enemy.rangedAtk || enemy.atk) - playerDefensePower() + rng(0, 1));
+  enemy.counterTime = 140;
+  enemy.counterDuration = 140;
+  enemy.counterDirection = directionBetween(enemy, state.player);
+  addMonsterBurstEffect(enemy, "attack");
+  addMagicBoltEffect(enemy, state.player, "#f5d0fe");
+  playSound("ranged");
+  damagePlayerFromEnemy(enemy, damage, "{name}の胞子弾！ {damage}ダメージ。");
+}
+
+function performEnemyIntent(enemy, intent) {
+  if (!intent || intent.type === "wait") return;
+  if (intent.type === "move") {
+    if (
+      (intent.x !== state.player.x || intent.y !== state.player.y) &&
+      !isBlockedForEnemy(intent.x, intent.y, enemy)
+    ) {
+      enemy.x = intent.x;
+      enemy.y = intent.y;
+    }
+    return;
+  }
+  if (intent.type === "melee") {
+    performEnemyMelee(enemy);
+    return;
+  }
+  if (intent.type === "ranged") performEnemyRanged(enemy);
+}
+
 function moveEnemies(options = {}) {
   for (const e of state.enemies) {
     if (state.gameOver.active) return;
     if (options.skipEnemy === e) continue;
     if (e.hp <= 0) continue;
-    const dx = Math.sign(state.player.x - e.x);
-    const dy = Math.sign(state.player.y - e.y);
-    const nx = e.x + (Math.random() < 0.5 ? dx : 0);
-    const ny = e.y + (Math.random() < 0.5 ? dy : 0);
-    const specialEncounter = specialEncounterById(e.encounterId);
-    if (specialEncounter && !specialEncounterSystem.containsPosition(specialEncounter, nx, ny)) continue;
+    const blockedBeforeTick = statusSystem.blocksAction(e);
+    applyEnemyStatusTick(e);
+    if (e.hp <= 0) continue;
+    if (blockedBeforeTick || statusSystem.blocksAction(e)) continue;
 
-    if (state.player.x === nx && state.player.y === ny) {
-      const enemyDmg = Math.max(1, e.atk - playerDefensePower() + rng(0, 1));
-      e.counterTime = 140;
-      e.counterDuration = 140;
-      e.counterDirection = directionBetween(e, state.player);
-      addMonsterBurstEffect(e, "attack");
-      state.player.hp -= enemyDmg;
-      startPlayerDamage(directionBetween(e, state.player));
-      addFloatingText(String(enemyDmg), state.player.x, state.player.y, "#fb7185");
-      playSound("damage");
-      startCameraShake();
-      startFlash("rgba(239,68,68,0.22)", 120);
-      addLog(`${e.name}の攻撃！ ${enemyDmg}ダメージ。`);
-      handlePlayerDefeat(defeatReasonFromEnemy(e));
-      if (state.gameOver.active) return;
-      continue;
-    }
-
-    if (isWalkable(nx, ny) && !enemyAt(nx, ny) && !(state.player.x === nx && state.player.y === ny)) {
-      e.x = nx;
-      e.y = ny;
-    }
+    const intent = monsterAi.decide(e, {
+      player: { x: state.player.x, y: state.player.y },
+      isBlockedForEnemy,
+      straightPathTo,
+      rng: Math.random,
+    });
+    performEnemyIntent(e, intent);
   }
 }
 
@@ -2020,7 +2213,9 @@ function tickTurn(options = {}) {
     handlePlayerDefeat(defeatReasons.hunger);
   }
   if (state.gameOver.active) return;
-  if (!starved) {
+  applyPlayerStatusTick();
+  if (state.gameOver.active) return;
+  if (!starved && !statusSystem.blocksNaturalRecovery(state.player)) {
     applyNaturalRecovery();
   }
   if (!options.skipEnemies) {
@@ -2090,7 +2285,7 @@ function pickUpItemAtPlayer() {
   }
 
   state.items = state.items.filter((entry) => entry.id !== item.id);
-  state.player.inventory.push({ id: item.id, type: item.type, upgrade: item.upgrade || 0 });
+  state.player.inventory.push({ id: item.id, type: item.type, upgrade: item.upgrade || 0, uses: item.uses });
   playSound("pickup");
   addLog(`${itemSystem.displayName(item)}を拾った。`);
   return true;
@@ -2138,6 +2333,18 @@ function eatFoodItem(item) {
 
 function drinkPotionItem(item) {
   const definition = itemTypes[item.type];
+  if (definition.cureAll) {
+    const cleared = statusSystem.clearAll(state.player);
+    removeInventoryItem(item);
+    playSound("use");
+    if (cleared.length > 0) {
+      addFloatingText("全快", state.player.x, state.player.y, "#86efac");
+      addLog(`${itemSystem.displayName(item)}を使い、状態異常をすべて治した。`);
+    } else {
+      addLog(`${itemSystem.displayName(item)}を使ったが、体調に変化はなかった。`);
+    }
+    return;
+  }
   const before = state.player.hp;
   state.player.hp = Math.min(state.player.maxHp, state.player.hp + (definition.heal || 0));
   removeInventoryItem(item);
@@ -2191,17 +2398,11 @@ function applyThunderScroll(definition) {
 
   const damage = Math.max(1, definition.power || 1);
   for (const enemy of targets) {
-    enemy.hp -= damage;
-    enemy.hitTime = 180;
-    enemy.hitDuration = 180;
-    enemy.hitDirection = directionBetween(state.player, enemy);
-    addMonsterBurstEffect(enemy, "hit");
-    addImpactEffect(enemy.x, enemy.y);
-    addFloatingText(String(damage), enemy.x, enemy.y, "#bfdbfe");
-    addLog(`いかずちが${enemy.name}に${damage}ダメージ。`);
-    if (enemy.hp <= 0) {
-      handleEnemyDefeat(enemy);
-    }
+    damageEnemy(enemy, damage, {
+      direction: directionBetween(state.player, enemy),
+      color: "#bfdbfe",
+      log: "いかずちが{name}に{damage}ダメージ。",
+    });
   }
 }
 
@@ -2237,6 +2438,33 @@ function throwPathTiles(dx, dy) {
   return tiles;
 }
 
+function waveWandItem(item) {
+  const beforeName = itemSystem.displayName(item);
+  if ((item.uses || 0) <= 0) {
+    playSound("fail");
+    addLog(`${beforeName}を振ったが、もう力は残っていない。`);
+    return false;
+  }
+
+  item.uses -= 1;
+  const delta = directionToDelta(state.player.direction);
+  const path = throwPathTiles(delta.dx, delta.dy);
+  const landing = path[path.length - 1];
+  const target = landing ? enemyAt(landing.x, landing.y) : null;
+  playSound("sleep");
+  addLog(`${beforeName}を振った。`);
+
+  if (!target) {
+    addLog("杖の光は何にも届かなかった。");
+    return true;
+  }
+
+  addMagicBoltEffect(state.player, target, "#c4b5fd");
+  const result = applyStatus(target, "sleep");
+  if (!result.applied) addLog(`${target.name}には杖の力が効かなかった。`);
+  return true;
+}
+
 // Looser than isItemPlacementBlocked: a thrown item may land at the thrower's feet.
 function canDropThrownItemAt(x, y) {
   if (!isWalkable(x, y)) return false;
@@ -2248,20 +2476,13 @@ function canDropThrownItemAt(x, y) {
 
 function resolveThrownHit(item, enemy) {
   const damage = Math.max(1, itemSystem.throwPowerOf(item) + rng(0, 1));
-  enemy.hp -= damage;
-  enemy.hitTime = 180;
-  enemy.hitDuration = 180;
-  enemy.hitDirection = directionBetween(state.player, enemy);
-  addMonsterBurstEffect(enemy, "hit");
-  addImpactEffect(enemy.x, enemy.y);
-  addFloatingText(String(damage), enemy.x, enemy.y, "#fde68a");
   playSound("hit");
   startHitStop(60);
   startCameraShake(90, 2);
-  addLog(`${enemy.name}に${damage}ダメージ。${itemSystem.displayName(item)}は壊れた。`);
-  if (enemy.hp <= 0) {
-    handleEnemyDefeat(enemy);
-  }
+  damageEnemy(enemy, damage, {
+    direction: directionBetween(state.player, enemy),
+    log: `{name}に{damage}ダメージ。${itemSystem.displayName(item)}は壊れた。`,
+  });
 }
 
 function dropThrownItem(item, path) {
@@ -2274,7 +2495,14 @@ function dropThrownItem(item, path) {
     return;
   }
 
-  state.items.push({ id: item.id, type: item.type, upgrade: item.upgrade || 0, x: position.x, y: position.y });
+  state.items.push({
+    id: item.id,
+    type: item.type,
+    upgrade: item.upgrade || 0,
+    uses: item.uses,
+    x: position.x,
+    y: position.y,
+  });
   playSound("drop");
   addLog(`${itemSystem.displayName(item)}は床に落ちた。`);
 }
@@ -2349,6 +2577,11 @@ function useInventorySlot(slotIndex) {
     return;
   }
 
+  if (kind === "wand") {
+    if (waveWandItem(item)) tickTurn();
+    return;
+  }
+
   playSound("fail");
   addLog(`${itemSystem.displayName(item)}の使い方が分からない。`);
 }
@@ -2379,12 +2612,14 @@ function resetPlayerRunState() {
   state.player.direction = "down";
   state.player.inventory = [];
   state.player.equipment = { weapon: null, shield: null };
+  state.player.statuses = [];
   state.player.hitTime = 0;
   state.player.hitDuration = 0;
   state.player.hitDirection = "down";
   nextItemId = 1;
   nextEventId = 1;
   inventoryRenderKey = "";
+  statusRenderKey = null;
 }
 
 function tryMove(dx, dy, options = {}) {
@@ -2702,6 +2937,7 @@ function drawRoundRectPath(x, y, w, h, r) {
 }
 
 function enemyMotionPhase(enemy, motion) {
+  if (statusSystem.has(enemy, "sleep")) return 0.75;
   const spriteOffset = enemy.sprite.length * 29;
   const positionOffset = enemy.x * 41 + enemy.y * 53;
   const alertFactor = enemy.spotted ? 0.6 : 1;
@@ -3133,6 +3369,7 @@ const ITEM_FALLBACK_COLORS = {
   food: "#f97316",
   potion: "#22c55e",
   scroll: "#fbbf24",
+  wand: "#c4b5fd",
 };
 
 function drawItemFallbackShape(itemType, sx, sy) {
@@ -3160,6 +3397,12 @@ function drawItemFallbackShape(itemType, sx, sy) {
     ctx.closePath();
   } else if (kind === "scroll") {
     ctx.rect(sx + 8, sy + 9, 16, 15);
+  } else if (kind === "wand") {
+    ctx.moveTo(sx + 9, sy + 24);
+    ctx.lineTo(sx + 21, sy + 8);
+    ctx.lineTo(sx + 24, sy + 11);
+    ctx.lineTo(sx + 12, sy + 26);
+    ctx.closePath();
   } else {
     ctx.arc(sx + TILE / 2, sy + TILE / 2, 8, 0, Math.PI * 2);
   }
@@ -3341,6 +3584,31 @@ function drawEnemyHpBar(enemy, position, draw) {
   ctx.restore();
 }
 
+function drawEnemyStatusMarks(enemy, position, draw) {
+  const marks = statusSystem.marks(enemy);
+  if (marks.length === 0) return;
+  const y = position.y - (enemy.hp < enemy.maxHp ? 17 : 9);
+  const gap = 5;
+  const widths = marks.map((mark) => Math.max(18, mark.mark.length * 9 + 6));
+  const totalWidth = widths.reduce((sum, width) => sum + width, 0) + gap * (marks.length - 1);
+  let x = position.x + draw.w / 2 - totalWidth / 2;
+
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "bold 10px 'Yu Gothic UI', sans-serif";
+  for (let index = 0; index < marks.length; index++) {
+    const mark = marks[index];
+    const width = widths[index];
+    ctx.fillStyle = "rgba(3, 7, 18, 0.82)";
+    ctx.fillRect(x, y - 7, width, 14);
+    ctx.fillStyle = mark.color;
+    ctx.fillText(mark.mark, x + width / 2, y);
+    x += width + gap;
+  }
+  ctx.restore();
+}
+
 function drawStrongEnemyAura(position, draw) {
   const pulse = (Math.sin(runtime.elapsed / 170) + 1) / 2;
   const centerX = position.x + draw.w / 2;
@@ -3373,6 +3641,7 @@ function drawEnemyActor(enemy) {
   drawEnemySpriteWithIdle(enemy, sprite, position, draw, motion);
   ctx.restore();
   drawEnemyHpBar(enemy, position, draw);
+  drawEnemyStatusMarks(enemy, position, draw);
 }
 
 function drawPlayerActor() {
@@ -3594,6 +3863,24 @@ function drawThrowItemEffect(effect) {
   ctx.restore();
 }
 
+function drawMagicBoltEffect(effect) {
+  const progress = clamp(effect.age / effect.duration, 0, 1);
+  const gridX = effect.fromX + (effect.x - effect.fromX) * progress;
+  const gridY = effect.fromY + (effect.y - effect.fromY) * progress;
+  const centerX = worldToScreenX(gridToWorldX(gridX) + TILE / 2);
+  const centerY = worldToScreenY(gridToWorldY(gridY) + TILE / 2);
+
+  ctx.save();
+  ctx.globalAlpha = 1 - progress * 0.25;
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = effect.color;
+  ctx.fillStyle = effect.color;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 4 + Math.sin(progress * Math.PI) * 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawEffectsLayer() {
   ctx.save();
   ctx.textAlign = "center";
@@ -3630,6 +3917,11 @@ function drawEffectsLayer() {
 
     if (effect.type === "throwItem") {
       drawThrowItemEffect(effect);
+      continue;
+    }
+
+    if (effect.type === "magicBolt") {
+      drawMagicBoltEffect(effect);
       continue;
     }
 
@@ -3938,15 +4230,35 @@ function updateUi() {
   ui.def.textContent = defenseBonus > 0 ? `${state.player.def} + ${defenseBonus}` : state.player.def;
   ui.hunger.textContent = `${state.player.hunger} / ${state.player.maxHunger}`;
   ui.exp.textContent = expDisplayText();
+  renderPlayerStatuses();
   ui.weapon.textContent = equippedNameForSlot("weapon");
   if (ui.shield) ui.shield.textContent = equippedNameForSlot("shield");
   renderInventory();
 }
 
+function renderPlayerStatuses() {
+  if (!ui.status) return;
+  const marks = statusSystem.marks(state.player);
+  const renderKey = marks.map((mark) => `${mark.key}:${mark.remaining}`).join(",");
+  if (renderKey === statusRenderKey) return;
+  statusRenderKey = renderKey;
+  ui.status.replaceChildren();
+  if (marks.length === 0) {
+    ui.status.textContent = "なし";
+    return;
+  }
+  for (const mark of marks) {
+    const span = document.createElement("span");
+    span.textContent = `${mark.name}(${mark.remaining})`;
+    span.style.color = mark.color;
+    ui.status.appendChild(span);
+  }
+}
+
 function renderInventory() {
   const equipmentKey = `${state.player.equipment.weapon || "none"}/${state.player.equipment.shield || "none"}`;
   const renderKey = `${equipmentKey}:${state.player.inventory
-    .map((item) => `${item.id}-${item.type}+${item.upgrade || 0}`)
+    .map((item) => `${item.id}-${item.type}+${item.upgrade || 0}[${item.uses ?? ""}]`)
     .join(",")}`;
   if (renderKey === inventoryRenderKey) return;
   inventoryRenderKey = renderKey;
@@ -4076,6 +4388,7 @@ if (debug.enabled) {
       defensePower: playerDefensePower(),
       equipment: { ...state.player.equipment },
       inventory: state.player.inventory.map((item) => ({ ...item })),
+      statuses: state.player.statuses.map((status) => ({ ...status })),
     },
     stairs: { ...state.stairs },
     enemies: state.enemies.map((enemy) => ({
@@ -4088,6 +4401,8 @@ if (debug.enabled) {
       name: enemy.name,
       sprite: enemy.sprite,
       tags: (enemy.tags || []).slice(),
+      statuses: (enemy.statuses || []).map((status) => ({ ...status })),
+      ai: enemy.ai,
       encounterRank: enemy.encounterRank,
       rewardProfile: enemy.rewardProfile,
     })),

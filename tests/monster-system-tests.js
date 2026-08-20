@@ -9,6 +9,7 @@ vm.createContext(context);
 for (const file of [
   "monster-catalog.js",
   "monster-system.js",
+  "dungeon-spawn-tables.js",
   "dungeon-encounter-tables.js",
   "dungeon-special-encounters.js",
 ]) {
@@ -28,6 +29,32 @@ assert.strictEqual(normalGolem.atk, 6, "existing normal golem attack should stay
 assert.strictEqual(normalGolem.exp, 9, "existing normal golem experience should stay unchanged");
 assert.strictEqual(normalGolem.encounterRank, "normal", "omitted rank should default to normal");
 assert.strictEqual(normalGolem.rewardProfile, null, "normal enemies should not gain a reward profile");
+assert.deepStrictEqual(Array.from(normalGolem.statuses), [], "生成した敵は空の状態異常配列を持つ");
+assert.strictEqual(normalGolem.ai, "chase");
+
+const poisonLizard = monsterSystem.createEnemy(monsterSystem.typeByKey("poisonLizard"), 1, 1, 3);
+assert.strictEqual(poisonLizard.ai, "chase");
+assert.strictEqual(poisonLizard.onHitStatus.key, "poison");
+assert.strictEqual(poisonLizard.onHitStatus.chance, 30);
+
+const puffMushroom = monsterSystem.createEnemy(monsterSystem.typeByKey("puffMushroom"), 1, 1, 4);
+assert.strictEqual(puffMushroom.ai, "ranged");
+assert.strictEqual(puffMushroom.rangedRange, 4);
+assert(puffMushroom.rangedAtk > 0);
+
+const spawnTables = context.window.GORO_DUNGEON_ENEMY_SPAWN_TABLES;
+assert.deepStrictEqual(
+  Array.from(spawnTables.find((table) => table.minFloor === 1).entries, (entry) => entry.type),
+  ["slime"],
+  "1Fの敵構成は変えない"
+);
+assert.deepStrictEqual(
+  Array.from(spawnTables.find((table) => table.minFloor === 2).entries, (entry) => entry.type),
+  ["slime", "bat"],
+  "2Fの敵構成は変えない"
+);
+assert(spawnTables.find((table) => table.minFloor === 3).entries.some((entry) => entry.type === "poisonLizard"));
+assert(spawnTables.find((table) => table.minFloor === 4).entries.some((entry) => entry.type === "puffMushroom"));
 
 const miniDevil = monsterSystem.typeByKey("miniDevil");
 const strongProfile = encounterData.rankProfiles.strong;

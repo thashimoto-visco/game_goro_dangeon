@@ -30,6 +30,7 @@ function instance(type, upgrade = 0) {
 assert.strictEqual(itemSystem.kindOf("ironSword"), "weapon");
 assert.strictEqual(itemSystem.kindOf("ironShield"), "shield");
 assert.strictEqual(itemSystem.kindOf("enhanceScroll"), "scroll");
+assert.strictEqual(itemSystem.kindOf("sleepWand"), "wand");
 
 assert.strictEqual(itemSystem.equipSlotOf("ironSword"), "weapon");
 assert.strictEqual(itemSystem.equipSlotOf("ironShield"), "shield");
@@ -40,6 +41,7 @@ assert.strictEqual(itemSystem.actionLabel("ironSword"), "装備");
 assert.strictEqual(itemSystem.actionLabel("riceBall"), "食べる");
 assert.strictEqual(itemSystem.actionLabel("herb"), "飲む");
 assert.strictEqual(itemSystem.actionLabel("enhanceScroll"), "読む");
+assert.strictEqual(itemSystem.actionLabel("sleepWand"), "振る");
 assert.strictEqual(itemSystem.kindLabel("ironShield"), "盾");
 
 const unknown = itemSystem.definitionByKey("存在しないキー");
@@ -83,6 +85,9 @@ assert.strictEqual(
 );
 assert.strictEqual(itemSystem.effectText(instance("enhanceScroll")), "装備を1段階強化する");
 assert.strictEqual(itemSystem.effectText(instance("demonSlayer")), "攻撃+2 / 悪魔に+6");
+assert.strictEqual(itemSystem.effectText(instance("cureHerb")), "状態異常をすべて治す");
+assert.strictEqual(itemSystem.displayName({ type: "sleepWand", uses: 2 }), "眠りの杖[2]");
+assert(itemSystem.effectText({ type: "sleepWand", uses: 2 }).includes("残り2回"));
 assert(itemSystem.flavorText("herb").length > 0, "全アイテムにフレーバー文がある");
 
 // --- 敵特効 -----------------------------------------------------------------
@@ -110,7 +115,7 @@ assert(itemSystem.throwPowerOf(instance("enhanceScroll")) >= 1, "投擲威力は
 // --- テーブルとカタログの整合 -----------------------------------------------
 
 const catalogKeys = new Set(itemSystem.keys);
-assert.strictEqual(catalogKeys.size, 10, "カタログは10種のアイテムを持つ");
+assert.strictEqual(catalogKeys.size, 12, "カタログは12種のアイテムを持つ");
 
 function assertTableEntries(label, tables) {
   assert(Array.isArray(tables) && tables.length > 0, `${label} が空`);
@@ -130,6 +135,15 @@ assertTableEntries("強敵報酬表", Object.values(encounterData.rewardProfiles
 for (const table of context.window.GORO_DUNGEON_ITEM_SPAWN_TABLES) {
   assert(Array.isArray(table.count) && table.count.length === 2, "階層別アイテム表はcountの範囲を持つ");
   assert(table.count[0] <= table.count[1], "countの下限は上限以下");
+  assert.strictEqual(
+    table.entries.reduce((sum, entry) => sum + entry.weight, 0),
+    100,
+    "階層別アイテム表の重み合計は100"
+  );
+}
+
+for (const table of context.window.GORO_DUNGEON_TREASURE_REWARD_TABLES) {
+  assert.strictEqual(table.entries.reduce((sum, entry) => sum + entry.weight, 0), 100, "宝物部屋表の重み合計は100");
 }
 
 // 盾と巻物が実際に取得経路へ入っているか。装備判断を増やす前提が崩れていないことを見る。
@@ -140,6 +154,8 @@ for (const table of context.window.GORO_DUNGEON_ITEM_SPAWN_TABLES) {
 assert(spawnableKeys.has("woodenShield"), "盾が階層別アイテム表に入っている");
 assert(spawnableKeys.has("enhanceScroll"), "強化の巻物が階層別アイテム表に入っている");
 assert(spawnableKeys.has("demonSlayer"), "レア武器が階層別アイテム表に入っている");
+assert(spawnableKeys.has("cureHerb"), "なおし草が階層別アイテム表に入っている");
+assert(spawnableKeys.has("sleepWand"), "眠りの杖が階層別アイテム表に入っている");
 
 const firstFloorTable = context.window.GORO_DUNGEON_ITEM_SPAWN_TABLES.find((table) => table.minFloor === 1);
 const firstFloorKeys = firstFloorTable.entries.map((entry) => entry.type);
