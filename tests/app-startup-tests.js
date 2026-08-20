@@ -76,16 +76,39 @@ function startApp({ search, protocol = "file:", hostname = "", seed = 12345, tes
   const elements = new Map();
   const eventHandlers = new Map();
   const storageValues = new Map();
+  const drawCalls = [];
+  const drawingContext = {
+    clearRect() {},
+    fillRect() {},
+    strokeRect() {},
+    save() {},
+    restore() {},
+    drawImage(image) {
+      drawCalls.push({ type: "image", src: image.currentSrc });
+    },
+    fillText(text) {
+      drawCalls.push({ type: "text", text });
+    },
+  };
+  let animationFrame = null;
   const document = {
     baseURI: "file:///E:/Current_Dev/Git_practice/etc/goro_dangeon/game_goro_dangeon/index.html",
     getElementById(id) {
-      if (!elements.has(id)) elements.set(id, createElement(id));
+      if (!elements.has(id)) {
+        const element = createElement(id);
+        if (id === "game") element.getContext = () => drawingContext;
+        elements.set(id, element);
+      }
       return elements.get(id);
     },
     createElement: () => createElement(),
     addEventListener() {},
   };
   class ImageStub {
+    constructor() {
+      this.complete = true;
+      this.naturalWidth = 1280;
+    }
     addEventListener() {}
     set src(value) {
       this.currentSrc = value;
@@ -128,7 +151,9 @@ function startApp({ search, protocol = "file:", hostname = "", seed = 12345, tes
     Image: ImageStub,
     document,
     window,
-    requestAnimationFrame() {},
+    requestAnimationFrame(callback) {
+      animationFrame = callback;
+    },
     performance: { now: () => 0 },
   };
   vm.createContext(context);
@@ -146,6 +171,11 @@ function startApp({ search, protocol = "file:", hostname = "", seed = 12345, tes
           shiftKey: Boolean(options.shiftKey),
           preventDefault() {},
         });
+      },
+      render() {
+        const callback = animationFrame;
+        if (callback) callback(0);
+        return drawCalls.slice();
       },
     };
   }
@@ -193,6 +223,15 @@ assert.strictEqual(publicHost, undefined, "public hosts should not expose the de
 const titleApp = startApp({ search: "", testMode: true });
 assert.strictEqual(titleApp.snapshot().scene, "title");
 assert.strictEqual(titleApp.snapshot().mapRows, 0, "title should not generate a dungeon floor");
+const titleDrawCalls = titleApp.render();
+assert(
+  titleDrawCalls.some((call) => call.type === "image" && call.src.endsWith("/assets/ui/title_bg.webp")),
+  "the first title frame should draw the loaded title background"
+);
+assert(
+  titleDrawCalls.some((call) => call.type === "text" && call.text === "吾郎の"),
+  "the first title frame should draw the title text"
+);
 titleApp.press("h");
 assert.strictEqual(titleApp.snapshot().scene, "help");
 titleApp.press("Escape");
