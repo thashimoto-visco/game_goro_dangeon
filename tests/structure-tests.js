@@ -1,4 +1,5 @@
 const assert = require("assert");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -22,7 +23,7 @@ function loadDungeonModules() {
   };
   vm.createContext(context);
 
-  for (const file of ["dungeon-layout.js", "dungeon-visibility.js"]) {
+  for (const file of ["floor-theme-catalog.js", "dungeon-layout.js", "dungeon-visibility.js"]) {
     vm.runInContext(fs.readFileSync(path.join(root, file), "utf8"), context, { filename: file });
   }
 
@@ -31,10 +32,6 @@ function loadDungeonModules() {
 
 function tileKey(x, y) {
   return `${x},${y}`;
-}
-
-function roomContains(room, x, y) {
-  return x >= room.x && x < room.x + room.w && y >= room.y && y < room.y + room.h;
 }
 
 function visibleRoomInteriorTiles(visibleTiles, room, tileKinds) {
@@ -69,68 +66,131 @@ function roomGraphDistance(layout, startRoomId, stairRoomId) {
 }
 
 const modules = loadDungeonModules();
-const layoutBuilder = modules.GORO_DUNGEON_LAYOUT.createBuilder({
+const visibility = modules.GORO_DUNGEON_VISIBILITY.createComputer({ cols: 40, rows: 30 });
+const themes = modules.GORO_DUNGEON_FLOOR_THEME_CATALOG;
+
+const compatibilityBuilder = modules.GORO_DUNGEON_LAYOUT.createBuilder({
   cols: 40,
   rows: 30,
   rng: createSeededRng(12345),
   clamp,
 });
-const visibility = modules.GORO_DUNGEON_VISIBILITY.createComputer({
-  cols: 40,
-  rows: 30,
-});
+const compatibilityLayouts = Array.from({ length: 20 }, () => compatibilityBuilder.buildFloorLayout());
+const compatibilityHash = crypto.createHash("sha256").update(JSON.stringify(compatibilityLayouts)).digest("hex");
+assert.strictEqual(
+  compatibilityHash,
+  "3a14e250d57686803d20123b20e4686957789a8066cff59ccb89afd71e190567",
+  "theme-free generation should remain byte-for-byte compatible with the pre-Topic 7 layout sequence"
+);
 
-let layoutsWithExtraConnection = 0;
-let layoutsWhoseShortestRouteSkipsRooms = 0;
-let layoutsWithNonExtremeEndpoints = 0;
-for (let i = 0; i < 50; i++) {
-  const layout = layoutBuilder.buildFloorLayout();
-  assert(layoutBuilder.floorLayoutIsValid(layout), `layout ${i} should be valid`);
-  assert(layout.rooms.length >= 2, `layout ${i} should have multiple rooms`);
-  assert(layout.rooms.every((room) => room.doorways.length > 0), `layout ${i} should give every room a doorway`);
-  assert(layout.corridors.every((corridor) => corridor.tiles.length > 0), `layout ${i} should not have empty corridors`);
+for (const theme of themes) {
+  let fallbackCount = 0;
+  let strongRoomCandidateCount = 0;
+  let eventRoomCandidateCount = 0;
+  let layoutsWithExtraConnection = 0;
+  let layoutsWhoseShortestRouteSkipsRooms = 0;
+  let layoutsWithNonExtremeEndpoints = 0;
 
-  if (layout.corridors.length >= layout.rooms.length) layoutsWithExtraConnection += 1;
-  const stairRoom = layout.rooms[layout.rooms.length - 1];
-  const shortestRoute = roomGraphDistance(layout, layout.rooms[0].id, stairRoom.id);
-  if (shortestRoute < layout.rooms.length - 1) layoutsWhoseShortestRouteSkipsRooms += 1;
-  const minCenterX = Math.min(...layout.rooms.map((room) => room.cx));
-  const maxCenterX = Math.max(...layout.rooms.map((room) => room.cx));
-  if (layout.rooms[0].cx !== minCenterX || stairRoom.cx !== maxCenterX) layoutsWithNonExtremeEndpoints += 1;
-
-  const startRoom = layout.rooms[0];
-  const roomVisible = visibility.compute(layout, { x: startRoom.cx, y: startRoom.cy });
-  for (const otherRoom of layout.rooms.slice(1)) {
-    const visibleInterior = visibleRoomInteriorTiles(roomVisible, otherRoom, layout.tileKinds);
-    assert.strictEqual(
-      visibleInterior.length,
-      0,
-      `layout ${i} should not reveal room ${otherRoom.id} from room ${startRoom.id}`
+  for (let seed = 1; seed <= 200; seed++) {
+    const layoutBuilder = modules.GORO_DUNGEON_LAYOUT.createBuilder({
+      cols: 40,
+      rows: 30,
+      rng: createSeededRng(seed),
+      clamp,
+    });
+    const layout = layoutBuilder.buildFloorLayout({ generation: theme.generation });
+    assert(layoutBuilder.floorLayoutIsValid(layout), `${theme.key} seed ${seed} should be valid`);
+    assert(layout.rooms.length >= 2, `${theme.key} seed ${seed} should have multiple rooms`);
+    assert(layout.rooms.every((room) => room.doorways.length > 0), `${theme.key} seed ${seed} should give every room a doorway`);
+    assert(
+      layout.corridors.every((corridor) => corridor.tiles.length > 0),
+      `${theme.key} seed ${seed} should not have empty corridors`
     );
+
+    if (layout.rooms.length === 2 && layout.corridors.length === 1) fallbackCount += 1;
+    const eligibleRooms = layout.rooms.slice(1, -1);
+    if (eligibleRooms.some((room) => room.w >= 5 && room.h >= 4)) strongRoomCandidateCount += 1;
+    if (
+      eligibleRooms.some(
+        (room) => room.w >= theme.eventRoom.minRoomW && room.h >= theme.eventRoom.minRoomH
+      )
+    ) {
+      eventRoomCandidateCount += 1;
+    }
+
+    if (theme.key === "greatHall") {
+      assert(layout.rooms.some((room) => room.feature), `greatHall seed ${seed} should contain a feature room`);
+      assert(!layout.rooms[0].feature, `greatHall seed ${seed} should not use the feature room as its start room`);
+      assert(
+        layout.rooms.slice(1).some((room) => room.feature),
+        `greatHall seed ${seed} should keep the feature room in the enemy and item placement pool`
+      );
+    }
+
+    if (theme.key === "standard") {
+      if (layout.corridors.length >= layout.rooms.length) layoutsWithExtraConnection += 1;
+      const stairRoom = layout.rooms[layout.rooms.length - 1];
+      const shortestRoute = roomGraphDistance(layout, layout.rooms[0].id, stairRoom.id);
+      if (shortestRoute < layout.rooms.length - 1) layoutsWhoseShortestRouteSkipsRooms += 1;
+      const minCenterX = Math.min(...layout.rooms.map((room) => room.cx));
+      const maxCenterX = Math.max(...layout.rooms.map((room) => room.cx));
+      if (layout.rooms[0].cx !== minCenterX || stairRoom.cx !== maxCenterX) layoutsWithNonExtremeEndpoints += 1;
+    }
+
+    const startRoom = layout.rooms[0];
+    const roomVisible = visibility.compute(layout, { x: startRoom.cx, y: startRoom.cy });
+    for (const otherRoom of layout.rooms.slice(1)) {
+      assert.strictEqual(
+        visibleRoomInteriorTiles(roomVisible, otherRoom, layout.tileKinds).length,
+        0,
+        `${theme.key} seed ${seed} should not reveal room ${otherRoom.id} from the start room`
+      );
+    }
+
+    const corridor = layout.corridors.find((entry) => entry.tiles.length >= 3) || layout.corridors[0];
+    const corridorTile = corridor.tiles[Math.floor(corridor.tiles.length / 2)];
+    const corridorVisible = visibility.compute(layout, corridorTile);
+    for (const room of layout.rooms) {
+      assert.strictEqual(
+        visibleRoomInteriorTiles(corridorVisible, room, layout.tileKinds).length,
+        0,
+        `${theme.key} seed ${seed} should not reveal room ${room.id} from corridor ${corridor.id}`
+      );
+    }
   }
 
-  const corridor = layout.corridors.find((entry) => entry.tiles.length >= 3) || layout.corridors[0];
-  const corridorTile = corridor.tiles[Math.floor(corridor.tiles.length / 2)];
-  const corridorVisible = visibility.compute(layout, corridorTile);
-  for (const room of layout.rooms) {
-    const visibleInterior = visibleRoomInteriorTiles(corridorVisible, room, layout.tileKinds);
-    assert.strictEqual(
-      visibleInterior.length,
-      0,
-      `layout ${i} should not reveal room ${room.id} interior from corridor ${corridor.id}`
+  assert.strictEqual(fallbackCount, 0, `${theme.key} should have no fallback layouts in 200 seeds`);
+  assert(
+    strongRoomCandidateCount >= 150,
+    `${theme.key} should support strong encounters in at least 150/200 layouts; got ${strongRoomCandidateCount}`
+  );
+  assert(
+    eventRoomCandidateCount >= 100,
+    `${theme.key} should support event rooms in at least 100/200 layouts; got ${eventRoomCandidateCount}`
+  );
+
+  if (theme.key === "standard") {
+    assert(layoutsWithExtraConnection > 0, "standard layouts should sometimes contain a loop connection");
+    assert(
+      layoutsWhoseShortestRouteSkipsRooms > 0,
+      "the standard start-to-stair route should not be forced through every room"
     );
+    assert(layoutsWithNonExtremeEndpoints > 0, "standard endpoints should not always be horizontal extremes");
   }
+
+  console.log(
+    `${theme.key}: fallback ${fallbackCount}/200, strong ${strongRoomCandidateCount}/200, event ${eventRoomCandidateCount}/200`
+  );
 }
 
-assert(layoutsWithExtraConnection > 0, "generated layouts should sometimes contain a loop connection");
-assert(
-  layoutsWhoseShortestRouteSkipsRooms > 0,
-  "the start-to-stair route should not be forced through every room on every generated layout"
-);
-assert(layoutsWithNonExtremeEndpoints > 0, "start and stairs should not always be fixed to the horizontal extremes");
-
-const fallbackLayout = layoutBuilder.buildFloorLayout(0);
-assert(layoutBuilder.floorLayoutIsValid(fallbackLayout), "fallback layout should be valid");
+const fallbackBuilder = modules.GORO_DUNGEON_LAYOUT.createBuilder({
+  cols: 40,
+  rows: 30,
+  rng: createSeededRng(12345),
+  clamp,
+});
+const fallbackLayout = fallbackBuilder.buildFloorLayout(0);
+assert(fallbackBuilder.floorLayoutIsValid(fallbackLayout), "fallback layout should be valid");
 assert.strictEqual(fallbackLayout.rooms.length, 2, "fallback layout should contain two rooms");
 assert.strictEqual(fallbackLayout.corridors.length, 1, "fallback layout should contain one corridor");
 
