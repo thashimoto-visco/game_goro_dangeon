@@ -67,6 +67,9 @@ if (itemSystem.catalog.length === 0) {
 if (!window.GORO_DUNGEON_SPECIAL_ENCOUNTERS || !window.GORO_DUNGEON_ENCOUNTER_DATA) {
   throw new Error("必要な特殊遭遇システムを読み込めません。");
 }
+if (!window.GORO_DUNGEON_RUN_RECORD || typeof window.GORO_DUNGEON_RUN_RECORD.createSystem !== "function") {
+  throw new Error("必要な記録システム GORO_DUNGEON_RUN_RECORD.createSystem を読み込めません。");
+}
 const encounterData = window.GORO_DUNGEON_ENCOUNTER_DATA;
 const specialEncounterSystem = window.GORO_DUNGEON_SPECIAL_ENCOUNTERS.createSystem({
   rng,
@@ -91,8 +94,51 @@ function createImage(src) {
   return image;
 }
 
+function createSafeStorage() {
+  let available = true;
+  const probeKey = "__goro_dungeon_storage_test__";
+  try {
+    window.localStorage.setItem(probeKey, "1");
+    window.localStorage.removeItem(probeKey);
+  } catch {
+    available = false;
+  }
+  return {
+    read(key) {
+      if (!available) return null;
+      try {
+        return window.localStorage.getItem(key);
+      } catch {
+        available = false;
+        return null;
+      }
+    },
+    write(key, value) {
+      if (!available) return false;
+      try {
+        window.localStorage.setItem(key, value);
+        return true;
+      } catch {
+        available = false;
+        return false;
+      }
+    },
+    isAvailable() {
+      return available;
+    },
+  };
+}
+
+const safeStorage = createSafeStorage();
+const runRecordSystem = window.GORO_DUNGEON_RUN_RECORD.createSystem({ storage: safeStorage });
+const loadedRunRecord = runRecordSystem.load();
+
 const images = {
   goro: createImage("assets/materials/spritesheet.webp"),
+  ui: {
+    title: createImage("assets/ui/title_bg.webp"),
+    result: createImage("assets/ui/result_bg.webp"),
+  },
   tiles: {
     floor1: createImage("assets/tiles/floor_01.svg"),
     floor2: createImage("assets/tiles/floor_02.svg"),
@@ -460,6 +506,7 @@ const ui = {
 };
 
 const state = {
+  scene: debug.enabled ? "playing" : "title",
   floor: 1,
   floorTheme: null,
   map: [],
@@ -487,6 +534,16 @@ const state = {
     turns: 0,
     defeated: 0,
     strongDefeated: 0,
+    itemsUsed: 0,
+    itemsPicked: 0,
+    deepestFloor: 0,
+    themesSeen: new Set(),
+  },
+  result: {
+    summary: null,
+    record: loadedRunRecord,
+    updatedFields: [],
+    storageAvailable: safeStorage.isAvailable(),
   },
   menu: {
     type: null,
@@ -1049,6 +1106,7 @@ function setPlayerDirection(dx, dy) {
 
 function canAcceptInput() {
   return (
+    state.scene === "playing" &&
     !state.action &&
     !state.player.motion &&
     !state.gameOver.active &&
@@ -1420,15 +1478,17 @@ function startGameOver(reason) {
 
   state.player.hp = 0;
   state.action = null;
+  stopDash();
   closeMenu();
   clearPlayerMotion();
   state.gameOver.active = true;
   state.gameOver.age = 0;
   state.gameOver.reason = reason;
+  finalizeRunResult();
   playSound("gameOver");
   startCameraShake(260, 6);
   startFlash("rgba(185, 28, 28, 0.42)", 260);
-  addLog(`${reason} Rキーで再挑戦。`);
+  addLog(`${reason} Rキーで再挑戦、Enterキーで結果を見る。`);
 }
 
 function handlePlayerDefeat(reason) {
@@ -1691,6 +1751,8 @@ function buildFloorLayout(theme) {
 
 function generateFloor() {
   state.floorTheme = selectFloorTheme(state.floor);
+  state.stats.deepestFloor = Math.max(state.stats.deepestFloor, state.floor);
+  state.stats.themesSeen.add(state.floorTheme.key);
   const layout = buildFloorLayout(state.floorTheme);
 
   state.map = layout.map;
@@ -2348,6 +2410,7 @@ function pickUpItemAtPlayer() {
 
   state.items = state.items.filter((entry) => entry.id !== item.id);
   state.player.inventory.push({ id: item.id, type: item.type, upgrade: item.upgrade || 0, uses: item.uses });
+  state.stats.itemsPicked += 1;
   playSound("pickup");
   addLog(`${itemSystem.displayName(item)}を拾った。`);
   return true;
@@ -2616,6 +2679,7 @@ function useInventorySlot(slotIndex) {
   const slot = itemSystem.equipSlotOf(item.type);
   if (slot) {
     toggleEquip(item, slot);
+    state.stats.itemsUsed += 1;
     tickTurn();
     return;
   }
@@ -2623,24 +2687,30 @@ function useInventorySlot(slotIndex) {
   const kind = itemSystem.kindOf(item.type);
   if (kind === "food") {
     eatFoodItem(item);
+    state.stats.itemsUsed += 1;
     tickTurn();
     return;
   }
 
   if (kind === "potion") {
     drinkPotionItem(item);
+    state.stats.itemsUsed += 1;
     tickTurn();
     return;
   }
 
   if (kind === "scroll") {
     readScrollItem(item);
+    state.stats.itemsUsed += 1;
     tickTurn();
     return;
   }
 
   if (kind === "wand") {
-    if (waveWandItem(item)) tickTurn();
+    if (waveWandItem(item)) {
+      state.stats.itemsUsed += 1;
+      tickTurn();
+    }
     return;
   }
 
@@ -2662,6 +2732,10 @@ function resetPlayerRunState() {
   state.stats.turns = 0;
   state.stats.defeated = 0;
   state.stats.strongDefeated = 0;
+  state.stats.itemsUsed = 0;
+  state.stats.itemsPicked = 0;
+  state.stats.deepestFloor = 0;
+  state.stats.themesSeen = new Set();
   const initialLevel = levelEntry(1);
   state.player.level = initialLevel.level;
   state.player.maxHp = initialLevel.maxHp;
@@ -2683,6 +2757,53 @@ function resetPlayerRunState() {
   nextEventId = 1;
   inventoryRenderKey = "";
   statusRenderKey = null;
+}
+
+function startNewRun(message = "ダンジョンに入った。階段を目指そう。青いマスが階段だ。") {
+  resetPlayerRunState();
+  clearTransientVisuals();
+  state.scene = "playing";
+  generateFloor();
+  addLog(message);
+}
+
+function returnToTitle() {
+  clearTransientVisuals();
+  state.scene = "title";
+}
+
+function handleNonPlayingInput(key) {
+  if (state.scene === "title") {
+    if (key === "h") {
+      state.scene = "help";
+      playSound("menu");
+      return;
+    }
+    if (key === "s") {
+      const nextMuted = !sound.muted;
+      setSoundMuted(nextMuted);
+      if (!nextMuted) playSound("use");
+      return;
+    }
+    startNewRun();
+    return;
+  }
+
+  if (state.scene === "help") {
+    if (key === "escape") {
+      state.scene = "title";
+      playSound("menu");
+    }
+    return;
+  }
+
+  if (state.scene === "result") {
+    if (key === "r") {
+      startNewRun("再挑戦！");
+      return;
+    }
+    if (key === "escape") returnToTitle();
+  }
 }
 
 function tryMove(dx, dy, options = {}) {
@@ -4191,6 +4312,242 @@ function drawFloorTransitionLayer() {
   ctx.restore();
 }
 
+function drawSceneBackdrop(image, fallbackColor, accentColor) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = fallbackColor;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const imageDrawn = drawSprite(image, 0, 0, canvas.width, canvas.height);
+  if (!imageDrawn) {
+    ctx.fillStyle = accentColor;
+    for (let y = 0; y < canvas.height; y += 48) {
+      for (let x = (y / 48) % 2 === 0 ? 0 : 24; x < canvas.width; x += 64) {
+        ctx.fillRect(x, y, 40, 24);
+      }
+    }
+  }
+  ctx.fillStyle = imageDrawn ? "rgba(3, 7, 18, 0.16)" : "rgba(3, 7, 18, 0.42)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function drawScenePanel(x, y, width, height, fill = "rgba(8, 13, 24, 0.9)") {
+  ctx.fillStyle = fill;
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = "#d6b15f";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x + 1, y + 1, width - 2, height - 2);
+  ctx.strokeStyle = "#5f4624";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 7, y + 7, width - 14, height - 14);
+}
+
+function drawTitleScene() {
+  drawSceneBackdrop(images.ui.title, "#07111f", "#142a3e");
+  const titleCenterX = 459;
+  drawScenePanel(300, 50, 318, 370, "rgba(5, 10, 20, 0.58)");
+
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#f8e7a6";
+  ctx.font = "bold 23px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("吾郎の", titleCenterX, 128);
+  ctx.fillStyle = "#facc15";
+  ctx.font = "bold 30px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("不思議なダンジョン", titleCenterX, 174);
+  ctx.strokeStyle = "rgba(120, 53, 15, 0.85)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(330, 211, 258, 2);
+
+  ctx.fillStyle = "#e6ecff";
+  ctx.font = "bold 16px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("キーを押して冒険を始める", titleCenterX, 270);
+  ctx.fillStyle = "#fde68a";
+  ctx.font = "bold 15px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("H : 操作説明", titleCenterX, 324);
+  ctx.fillText(`S : 音 ${sound.muted ? "OFF" : "ON"}`, titleCenterX, 352);
+  ctx.fillStyle = "rgba(226, 232, 240, 0.72)";
+  ctx.font = "12px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("矢印キー / WASD で移動", titleCenterX, 390);
+  ctx.restore();
+}
+
+function drawHelpScene() {
+  drawSceneBackdrop(null, "#091425", "#13263a");
+  drawScenePanel(44, 28, 552, 424);
+  ctx.save();
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#facc15";
+  ctx.textAlign = "center";
+  ctx.font = "bold 25px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("操作説明", canvas.width / 2, 64);
+
+  const helpLines = [
+    ["移動・攻撃", "矢印キー / WASD（敵の方向へ入力で攻撃）"],
+    ["足踏み", "Space"],
+    ["ダッシュ", "Shift + 方向キー"],
+    ["持ち物", "I で開く / Enter で使う・装備する"],
+    ["持ち物操作", "T 投げる / D 置く / Esc 閉じる"],
+    ["即時使用", "1〜9"],
+    ["ミニマップ", "M"],
+    ["状態異常", "毒は継続ダメージ、眠りは行動不能"],
+    ["目的", "青い階段を探して、より深い階へ進もう"],
+  ];
+  ctx.textAlign = "left";
+  for (let index = 0; index < helpLines.length; index++) {
+    const y = 108 + index * 34;
+    ctx.fillStyle = "#fde68a";
+    ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(helpLines[index][0], 78, y);
+    ctx.fillStyle = "#e6ecff";
+    ctx.font = "14px 'Yu Gothic UI', sans-serif";
+    ctx.fillText(helpLines[index][1], 202, y);
+  }
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#facc15";
+  ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("Esc : タイトルへ戻る", canvas.width / 2, 424);
+  ctx.restore();
+}
+
+function createRunSummary() {
+  const themeNames = Array.from(state.stats.themesSeen, (key) => floorThemeByKey(key).name);
+  return {
+    reason: state.gameOver.reason || defeatReasons.fallbackEnemy,
+    deepestFloor: state.stats.deepestFloor,
+    defeated: state.stats.defeated,
+    strongDefeated: state.stats.strongDefeated,
+    level: state.player.level,
+    exp: state.player.exp,
+    turns: state.stats.turns,
+    itemsUsed: state.stats.itemsUsed,
+    itemsPicked: state.stats.itemsPicked,
+    themesSeen: themeNames,
+    weapon: equippedNameForSlot("weapon"),
+    shield: equippedNameForSlot("shield"),
+  };
+}
+
+function finalizeRunResult() {
+  const summary = createRunSummary();
+  summary.score = runRecordSystem.scoreOf(summary);
+  const merged = runRecordSystem.merge(summary);
+  state.result.summary = summary;
+  state.result.record = merged.record;
+  state.result.updatedFields = merged.updatedFields;
+  state.result.storageAvailable = safeStorage.isAvailable() && merged.saved;
+}
+
+function enterResultScene() {
+  if (!state.gameOver.active) return;
+  if (!state.result.summary) finalizeRunResult();
+  state.scene = "result";
+  stopDash();
+  playSound("menu");
+}
+
+function drawResultScene() {
+  const summary = state.result.summary;
+  drawSceneBackdrop(images.ui.result, "#130c1c", "#2a1838");
+  const panelX = 242;
+  const panelCenterX = 432;
+  drawScenePanel(panelX, 14, 380, 450, "rgba(7, 9, 19, 0.56)");
+  ctx.save();
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#facc15";
+  ctx.font = "bold 24px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("冒険の記録", panelCenterX, 42);
+
+  if (!summary) {
+    ctx.fillStyle = "#e6ecff";
+    ctx.font = "16px 'Yu Gothic UI', sans-serif";
+    ctx.fillText("記録はまだありません。", panelCenterX, 230);
+    ctx.restore();
+    return;
+  }
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#fca5a5";
+  ctx.font = "bold 13px 'Yu Gothic UI', sans-serif";
+  splitTextByLength(summary.reason, 22)
+    .slice(0, 2)
+    .forEach((line, index) => ctx.fillText(line, 264, 72 + index * 18));
+
+  ctx.fillStyle = "#fde68a";
+  ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("今回の結果", 264, 112);
+  const resultColumns = [
+    [
+      `スコア      ${summary.score}`,
+      `到達階層    ${summary.deepestFloor}F`,
+      `レベル      ${summary.level}`,
+      `経験値      ${summary.exp}`,
+      `撃破数      ${summary.defeated}`,
+    ],
+    [
+      `強敵撃破    ${summary.strongDefeated}`,
+      `使用 / 拾得 ${summary.itemsUsed} / ${summary.itemsPicked}`,
+      `経過ターン  ${summary.turns}`,
+      `武器        ${summary.weapon}`,
+      `盾          ${summary.shield}`,
+    ],
+  ];
+  ctx.fillStyle = "#e6ecff";
+  ctx.font = "12px 'Yu Gothic UI', sans-serif";
+  resultColumns.forEach((lines, columnIndex) =>
+    lines.forEach((line, index) => ctx.fillText(line, 264 + columnIndex * 178, 138 + index * 22))
+  );
+
+  ctx.fillStyle = "#fde68a";
+  ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("通ったフロア", 264, 260);
+  const themeText = summary.themesSeen.length > 0 ? summary.themesSeen.join(" → ") : "記録なし";
+  const themeLines = splitTextByLength(themeText, 27).slice(0, 2);
+  ctx.fillStyle = "#e6ecff";
+  ctx.font = "12px 'Yu Gothic UI', sans-serif";
+  themeLines.forEach((line, index) => ctx.fillText(line, 264, 284 + index * 19));
+
+  ctx.fillStyle = "#fde68a";
+  ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("自己ベスト", 264, 326);
+  if (!state.result.storageAvailable) {
+    ctx.fillStyle = "#fca5a5";
+    ctx.font = "13px 'Yu Gothic UI', sans-serif";
+    splitTextByLength("この環境では記録を保存できません", 22).forEach((line, index) =>
+      ctx.fillText(line, 264, 354 + index * 22)
+    );
+  } else {
+    const record = state.result.record;
+    const updated = new Set(state.result.updatedFields);
+    const bestColumns = [
+      [
+        ["bestScore", `最高スコア ${record.bestScore}`],
+        ["bestFloor", `最高到達   ${record.bestFloor}F`],
+        ["bestLevel", `最高レベル ${record.bestLevel}`],
+      ],
+      [
+        ["bestDefeated", `最多撃破     ${record.bestDefeated}`],
+        ["bestStrongDefeated", `最多強敵撃破 ${record.bestStrongDefeated}`],
+        [null, `冒険回数     ${record.runCount}`],
+      ],
+    ];
+    ctx.font = "12px 'Yu Gothic UI', sans-serif";
+    bestColumns.forEach((lines, columnIndex) =>
+      lines.forEach(([field, label], index) => {
+        const isUpdated = field && updated.has(field);
+        ctx.fillStyle = field ? (isUpdated ? "#facc15" : "#e6ecff") : "rgba(226, 232, 240, 0.72)";
+        ctx.fillText(`${isUpdated ? "★ " : "  "}${label}`, 264 + columnIndex * 178, 352 + index * 24);
+      })
+    );
+  }
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#facc15";
+  ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
+  ctx.fillText("R : 再挑戦     Esc : タイトルへ", panelCenterX, 438);
+  ctx.restore();
+}
+
 function drawOverlayLayer() {
   drawLowHpVignette();
 
@@ -4266,7 +4623,7 @@ function drawGameOverLayer() {
 
     ctx.fillStyle = "#facc15";
     ctx.font = "bold 14px 'Yu Gothic UI', sans-serif";
-    ctx.fillText("Rキーで再挑戦", canvas.width / 2, panelY + panelHeight - 28);
+    ctx.fillText("R : 再挑戦     Enter : 結果を見る", canvas.width / 2, panelY + panelHeight - 28);
   }
 
   ctx.restore();
@@ -4295,6 +4652,7 @@ function draw() {
 }
 
 function updateUi() {
+  if (state.scene !== "playing") return;
   const attackBonus = weaponAttackBonus();
   const defenseBonus = shieldDefenseBonus();
   ui.floor.textContent = `${state.floor}F`;
@@ -4366,8 +4724,16 @@ function renderInventory() {
 function loop(timestamp = 0) {
   const delta = runtime.lastTime === 0 ? 0 : Math.min(MAX_DELTA, timestamp - runtime.lastTime);
   runtime.lastTime = timestamp;
-  updateAnimations(delta);
-  draw();
+  if (state.scene === "playing") {
+    updateAnimations(delta);
+    draw();
+  } else if (state.scene === "title") {
+    drawTitleScene();
+  } else if (state.scene === "help") {
+    drawHelpScene();
+  } else {
+    drawResultScene();
+  }
   updateUi();
   requestAnimationFrame(loop);
 }
@@ -4383,6 +4749,11 @@ window.addEventListener("keydown", (event) => {
     key === "f2"
   ) {
     event.preventDefault();
+  }
+
+  if (state.scene !== "playing") {
+    handleNonPlayingInput(key);
+    return;
   }
 
   if (dash.active) {
@@ -4405,11 +4776,12 @@ window.addEventListener("keydown", (event) => {
   }
 
   if (key === "r" && state.gameOver.active) {
-    resetPlayerRunState();
-    clearPlayerMotion();
-    clearTransientVisuals();
-    addLog("再挑戦！");
-    generateFloor();
+    startNewRun("再挑戦！");
+    return;
+  }
+
+  if (key === "enter" && state.gameOver.active) {
+    enterResultScene();
     return;
   }
 
@@ -4449,6 +4821,7 @@ if (ui.soundToggle) {
 if (debug.enabled) {
   if (debug.startFloor !== null) state.floor = debug.startFloor;
   window.GORO_DUNGEON_DEBUG_SNAPSHOT = () => ({
+    scene: state.scene,
     floor: state.floor,
     floorTheme: state.floorTheme
       ? { key: state.floorTheme.key, name: state.floorTheme.name, arrivalText: state.floorTheme.arrivalText }
@@ -4501,9 +4874,41 @@ if (debug.enabled) {
           completed: Boolean(state.specialEncounter.completed),
         }
       : null,
-    stats: { ...state.stats },
+    stats: { ...state.stats, themesSeen: Array.from(state.stats.themesSeen) },
   });
 }
-generateFloor();
-addLog("ダンジョンに入った。階段を目指そう。青いマスが階段だ。");
+if (appConfig.testMode) {
+  window.GORO_DUNGEON_TEST_API = {
+    snapshot: () => ({
+      scene: state.scene,
+      floor: state.floor,
+      mapRows: state.map.length,
+      muted: sound.muted,
+      player: {
+        x: state.player.x,
+        y: state.player.y,
+        level: state.player.level,
+        hp: state.player.hp,
+        inventory: state.player.inventory.map((item) => ({ ...item })),
+        equipment: { ...state.player.equipment },
+        statuses: state.player.statuses.map((status) => ({ ...status })),
+      },
+      gameOver: { ...state.gameOver },
+      stats: { ...state.stats, themesSeen: Array.from(state.stats.themesSeen) },
+      result: {
+        summary: state.result.summary ? { ...state.result.summary } : null,
+        record: { ...state.result.record },
+        updatedFields: state.result.updatedFields.slice(),
+        storageAvailable: state.result.storageAvailable,
+      },
+    }),
+    defeat(reason = "テストで倒れた") {
+      startGameOver(reason);
+    },
+  };
+}
+if (debug.enabled) {
+  generateFloor();
+  addLog("ダンジョンに入った。階段を目指そう。青いマスが階段だ。");
+}
 requestAnimationFrame(loop);
