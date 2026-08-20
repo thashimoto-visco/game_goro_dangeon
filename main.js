@@ -4316,7 +4316,7 @@ function drawSceneBackdrop(image, fallbackColor, accentColor) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = fallbackColor;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  const imageDrawn = drawSprite(image, 0, 0, canvas.width, canvas.height);
+  const imageDrawn = drawSprite({ image }, 0, 0, canvas.width, canvas.height);
   if (!imageDrawn) {
     ctx.fillStyle = accentColor;
     for (let y = 0; y < canvas.height; y += 48) {
