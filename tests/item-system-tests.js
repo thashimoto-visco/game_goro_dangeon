@@ -162,4 +162,19 @@ const firstFloorKeys = firstFloorTable.entries.map((entry) => entry.type);
 assert(!firstFloorKeys.includes("demonSlayer"), "レア武器は1Fでは出さない");
 assert(!firstFloorKeys.includes("enhanceScroll"), "巻物は1Fでは出さない");
 
+function weightOf(table, type) {
+  return table.entries.find((entry) => entry.type === type)?.weight || 0;
+}
+
+const middleFloorTable = context.window.GORO_DUNGEON_ITEM_SPAWN_TABLES.find((table) => table.minFloor === 2);
+const deepFloorTable = context.window.GORO_DUNGEON_ITEM_SPAWN_TABLES.find((table) => table.minFloor === 4);
+assert.strictEqual(weightOf(firstFloorTable, "riceBall"), 30, "1Fの食料率は30%を維持する");
+assert.strictEqual(weightOf(middleFloorTable, "riceBall"), 30, "2〜3Fの食料率を30%にする");
+assert.strictEqual(
+  weightOf(deepFloorTable, "riceBall") + weightOf(deepFloorTable, "bigRiceBall"),
+  30,
+  "4F以降の通常食と大きいおにぎりの合計率を30%にする"
+);
+assert.strictEqual(weightOf(deepFloorTable, "bigRiceBall"), 10, "4F以降は大きいおにぎりを10%にする");
+
 console.log("item system tests passed");

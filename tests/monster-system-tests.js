@@ -25,7 +25,7 @@ const resolver = context.window.GORO_DUNGEON_SPECIAL_ENCOUNTERS;
 const golem = monsterSystem.typeByKey("golem");
 const normalGolem = monsterSystem.createEnemy(golem, 3, 4, 5);
 assert.strictEqual(normalGolem.maxHp, 15, "existing normal golem HP should stay unchanged");
-assert.strictEqual(normalGolem.atk, 6, "existing normal golem attack should stay unchanged");
+assert.strictEqual(normalGolem.atk, 7, "5F normal golem should gain one attack from the balance pass");
 assert.strictEqual(normalGolem.exp, 9, "existing normal golem experience should stay unchanged");
 assert.strictEqual(normalGolem.encounterRank, "normal", "omitted rank should default to normal");
 assert.strictEqual(normalGolem.rewardProfile, null, "normal enemies should not gain a reward profile");
@@ -36,11 +36,25 @@ const poisonLizard = monsterSystem.createEnemy(monsterSystem.typeByKey("poisonLi
 assert.strictEqual(poisonLizard.ai, "chase");
 assert.strictEqual(poisonLizard.onHitStatus.key, "poison");
 assert.strictEqual(poisonLizard.onHitStatus.chance, 30);
+assert.strictEqual(poisonLizard.atk, 4, "3F poison lizard attack should stay unchanged");
+assert.strictEqual(
+  monsterSystem.createEnemy(monsterSystem.typeByKey("poisonLizard"), 1, 1, 4).atk,
+  5,
+  "4F poison lizard should gain one attack"
+);
 
 const puffMushroom = monsterSystem.createEnemy(monsterSystem.typeByKey("puffMushroom"), 1, 1, 4);
 assert.strictEqual(puffMushroom.ai, "ranged");
 assert.strictEqual(puffMushroom.rangedRange, 4);
-assert(puffMushroom.rangedAtk > 0);
+assert.strictEqual(puffMushroom.rangedAtk, 3, "4F puff mushroom attack should stay unchanged");
+assert.strictEqual(
+  monsterSystem.createEnemy(monsterSystem.typeByKey("puffMushroom"), 1, 1, 5).rangedAtk,
+  4,
+  "5F puff mushroom should gain one ranged attack"
+);
+
+assert.strictEqual(monsterSystem.createEnemy(monsterSystem.typeByKey("slime"), 1, 1, 1).atk, 2, "1F slime is unchanged");
+assert.strictEqual(monsterSystem.createEnemy(monsterSystem.typeByKey("bat"), 1, 1, 2).atk, 3, "2F bat is unchanged");
 
 const spawnTables = context.window.GORO_DUNGEON_ENEMY_SPAWN_TABLES;
 assert.deepStrictEqual(

@@ -1412,7 +1412,8 @@ function confirmInventoryMenu() {
 }
 
 function dropInventoryItem(index) {
-  if (state.menu.type !== "inventory") return;
+  const fromInventoryMenu = state.menu.type === "inventory";
+  if (!fromInventoryMenu && (!canAcceptInput() || state.player.hp <= 0)) return;
   const item = state.player.inventory[index];
   if (!item) {
     playSound("fail");
@@ -1435,10 +1436,12 @@ function dropInventoryItem(index) {
     x: state.player.x,
     y: state.player.y,
   });
-  state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
+  if (fromInventoryMenu) {
+    state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
+  }
   playSound("drop");
   addLog(`${label}を置いた。`);
-  closeMenu();
+  if (fromInventoryMenu) closeMenu();
 }
 
 function handleMenuInput(key) {
@@ -2374,19 +2377,35 @@ function handleSpringObject(object) {
     return;
   }
 
-  if (state.player.hp >= state.player.maxHp) {
+  const needsHp = state.player.hp < state.player.maxHp;
+  const needsHunger = state.player.hunger < state.player.maxHunger;
+  if (!needsHp && !needsHunger) {
     addLog("泉の水は静かに揺れている。");
     return;
   }
 
-  const before = state.player.hp;
-  const healAmount = Math.max(8, Math.floor(state.player.maxHp * 0.35));
-  state.player.hp = Math.min(state.player.maxHp, state.player.hp + healAmount);
+  const beforeHp = state.player.hp;
+  const beforeHunger = state.player.hunger;
+  if (needsHp) {
+    const healAmount = Math.max(8, Math.floor(state.player.maxHp * 0.35));
+    state.player.hp = Math.min(state.player.maxHp, state.player.hp + healAmount);
+  }
+  if (needsHunger) {
+    state.player.hunger = state.player.maxHunger;
+  }
   object.used = true;
-  addFloatingText(`+${state.player.hp - before}`, state.player.x, state.player.y, "#5eead4");
+  const recoveredHp = state.player.hp - beforeHp;
+  const recoveredHunger = state.player.hunger - beforeHunger;
+  const recoveryLabels = [];
+  if (recoveredHp > 0) recoveryLabels.push(`HP+${recoveredHp}`);
+  if (recoveredHunger > 0) recoveryLabels.push("満腹全快");
+  addFloatingText(recoveryLabels.join(" / "), state.player.x, state.player.y, needsHp ? "#5eead4" : "#fbbf24");
   playSound("spring");
   startFlash("rgba(45,212,191,0.22)", 180);
-  addLog(`泉の水が吾郎をいやした。HP ${before}→${state.player.hp}。`);
+  const recoveryLogs = [];
+  if (recoveredHp > 0) recoveryLogs.push(`HP ${beforeHp}→${state.player.hp}`);
+  if (recoveredHunger > 0) recoveryLogs.push(`満腹度 ${beforeHunger}→${state.player.hunger}`);
+  addLog(`泉の水が吾郎をいやした。${recoveryLogs.join("、")}。`);
 }
 
 function handleEventObjectAtPlayer() {
@@ -2633,7 +2652,8 @@ function dropThrownItem(item, path) {
 }
 
 function throwInventoryItem(index) {
-  if (state.menu.type !== "inventory") return;
+  const fromInventoryMenu = state.menu.type === "inventory";
+  if (!fromInventoryMenu && (!canAcceptInput() || state.player.hp <= 0)) return;
   const item = state.player.inventory[index];
   if (!item) {
     playSound("fail");
@@ -2652,8 +2672,10 @@ function throwInventoryItem(index) {
   const target = path.length > 0 ? enemyAt(landing.x, landing.y) : null;
 
   removeInventoryItem(item);
-  state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
-  closeMenu();
+  if (fromInventoryMenu) {
+    state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
+    closeMenu();
+  }
 
   addThrowEffect(item, landing.x, landing.y);
   playSound("throw");
@@ -2716,6 +2738,29 @@ function useInventorySlot(slotIndex) {
 
   playSound("fail");
   addLog(`${itemSystem.displayName(item)}の使い方が分からない。`);
+}
+
+function inventorySlotFromKeyboardEvent(event) {
+  const codeMatch = /^(?:Digit|Numpad)([1-9])$/.exec(event.code || "");
+  if (codeMatch) return Number(codeMatch[1]) - 1;
+  const keyMatch = /^([1-9])$/.exec(event.key || "");
+  return keyMatch ? Number(keyMatch[1]) - 1 : null;
+}
+
+function handleInventoryShortcut(event) {
+  const slotIndex = inventorySlotFromKeyboardEvent(event);
+  if (slotIndex === null) return false;
+  if (isMenuOpen() && !event.shiftKey && !event.altKey) return false;
+
+  event.preventDefault();
+  if (event.altKey) {
+    dropInventoryItem(slotIndex);
+  } else if (event.shiftKey) {
+    throwInventoryItem(slotIndex);
+  } else {
+    useInventorySlot(slotIndex);
+  }
+  return true;
 }
 
 function resetPlayerRunState() {
@@ -4386,8 +4431,8 @@ function drawHelpScene() {
     ["足踏み", "Space"],
     ["ダッシュ", "Shift + 方向キー"],
     ["持ち物", "I で開く / Enter で使う・装備する"],
-    ["持ち物操作", "T 投げる / D 置く / Esc 閉じる"],
-    ["即時使用", "1〜9"],
+    ["即時操作", "1〜9 使用 / Shift+番号 投げる"],
+    ["持ち物メニュー", "Alt+番号 置く / メニュー内 T・D"],
     ["ミニマップ", "M"],
     ["状態異常", "毒は継続ダメージ、眠りは行動不能"],
     ["目的", "青い階段を探して、より深い階へ進もう"],
@@ -4785,6 +4830,8 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (handleInventoryShortcut(event)) return;
+
   if (isMenuOpen()) {
     handleMenuInput(key);
     return;
@@ -4795,10 +4842,6 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
-  if (/^[1-9]$/.test(key)) {
-    useInventorySlot(Number(key) - 1);
-    return;
-  }
   const move = event.shiftKey ? startDash : tryMove;
   if (key === "arrowup" || key === "w") move(0, -1);
   if (key === "arrowdown" || key === "s") move(0, 1);
@@ -4889,6 +4932,9 @@ if (appConfig.testMode) {
         y: state.player.y,
         level: state.player.level,
         hp: state.player.hp,
+        maxHp: state.player.maxHp,
+        hunger: state.player.hunger,
+        maxHunger: state.player.maxHunger,
         inventory: state.player.inventory.map((item) => ({ ...item })),
         equipment: { ...state.player.equipment },
         statuses: state.player.statuses.map((status) => ({ ...status })),
@@ -4904,6 +4950,19 @@ if (appConfig.testMode) {
     }),
     defeat(reason = "テストで倒れた") {
       startGameOver(reason);
+    },
+    spring({ hp = state.player.hp, hunger = state.player.hunger, maxHunger = state.player.maxHunger, used = false } = {}) {
+      state.player.hp = Math.max(0, Math.min(state.player.maxHp, hp));
+      state.player.maxHunger = Math.max(1, Math.min(HUNGER_HARD_MAX, maxHunger));
+      state.player.hunger = Math.max(0, Math.min(state.player.maxHunger, hunger));
+      const object = { used: Boolean(used) };
+      handleSpringObject(object);
+      return { used: object.used };
+    },
+    setInventory(types = []) {
+      state.player.inventory = types.filter((type) => itemTypes[type]).map((type) => createItemInstance(type));
+      state.player.equipment = { weapon: null, shield: null };
+      state.items = state.items.filter((item) => item.x !== state.player.x || item.y !== state.player.y);
     },
   };
 }
