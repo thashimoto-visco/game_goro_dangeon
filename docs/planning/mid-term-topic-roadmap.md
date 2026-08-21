@@ -368,6 +368,8 @@ Topic 7では扱わず、バックログへ残すもの:
 
 Topic 1からTopic 8まで完了した。次の中期ロードマップは、以下の候補から再編する。
 
+新機能へ進む前の短期調整として、プレイ所感を反映した `prot2_balance_pass1/hunger-fountain-enemy-pressure-plan.md` を実装した。食料率30%、泉の満腹度全回復、中層以降3種の攻撃成長調整まで完了している。詳細は同ディレクトリの `balance-pass1-completion-handoff.md` に残した。
+
 Topic 8の完了後は、`mid-term-backlog.md` から次の中期計画を組み直す。有力な軸は3つある。
 
 - 視界の光線方式化。迷路フロアと水路の前提条件で、1トピック分の重さがある。

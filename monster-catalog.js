@@ -92,7 +92,7 @@
       name: "ゴロ岩ゴーレム",
       defeatText: "吾郎はゴロ岩につぶされてしまった",
       tags: ["stone"],
-      stats: { baseHp: 9, baseAtk: 4, hpScale: 1.4, atkScale: 0.6, exp: 9 },
+      stats: { baseHp: 9, baseAtk: 4, hpScale: 1.4, atkScale: 0.7, exp: 9 },
       asset: "assets/monster_golem.svg",
       draw: { offsetX: -38, offsetY: -82, w: 76, h: 82 },
       motion: {
@@ -191,7 +191,7 @@
       tags: ["beast"],
       ai: "chase",
       onHitStatus: { key: "poison", chance: 30 },
-      stats: { baseHp: 7, baseAtk: 3, hpScale: 1.1, atkScale: 0.45, exp: 7 },
+      stats: { baseHp: 7, baseAtk: 3, hpScale: 1.1, atkScale: 0.55, exp: 7 },
       draw: { offsetX: -27, offsetY: -49, w: 54, h: 47 },
       motion: { cycle: 680, bob: 1, wobble: 0.045, shadowX: 19, shadowY: 5 },
       fallbackShape: {
@@ -218,7 +218,7 @@
       ai: "ranged",
       rangedRange: 4,
       rangedAtk: 2,
-      stats: { baseHp: 5, baseAtk: 2, hpScale: 0.9, atkScale: 0.35, exp: 7 },
+      stats: { baseHp: 5, baseAtk: 2, hpScale: 0.9, atkScale: 0.45, exp: 7 },
       draw: { offsetX: -26, offsetY: -56, w: 52, h: 54 },
       motion: { cycle: 840, bob: 1.5, scaleX: 1.06, scaleY: 0.94, wobble: 0.025 },
       fallbackShape: {

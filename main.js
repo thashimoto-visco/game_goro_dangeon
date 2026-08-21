@@ -2374,19 +2374,35 @@ function handleSpringObject(object) {
     return;
   }
 
-  if (state.player.hp >= state.player.maxHp) {
+  const needsHp = state.player.hp < state.player.maxHp;
+  const needsHunger = state.player.hunger < state.player.maxHunger;
+  if (!needsHp && !needsHunger) {
     addLog("泉の水は静かに揺れている。");
     return;
   }
 
-  const before = state.player.hp;
-  const healAmount = Math.max(8, Math.floor(state.player.maxHp * 0.35));
-  state.player.hp = Math.min(state.player.maxHp, state.player.hp + healAmount);
+  const beforeHp = state.player.hp;
+  const beforeHunger = state.player.hunger;
+  if (needsHp) {
+    const healAmount = Math.max(8, Math.floor(state.player.maxHp * 0.35));
+    state.player.hp = Math.min(state.player.maxHp, state.player.hp + healAmount);
+  }
+  if (needsHunger) {
+    state.player.hunger = state.player.maxHunger;
+  }
   object.used = true;
-  addFloatingText(`+${state.player.hp - before}`, state.player.x, state.player.y, "#5eead4");
+  const recoveredHp = state.player.hp - beforeHp;
+  const recoveredHunger = state.player.hunger - beforeHunger;
+  const recoveryLabels = [];
+  if (recoveredHp > 0) recoveryLabels.push(`HP+${recoveredHp}`);
+  if (recoveredHunger > 0) recoveryLabels.push("満腹全快");
+  addFloatingText(recoveryLabels.join(" / "), state.player.x, state.player.y, needsHp ? "#5eead4" : "#fbbf24");
   playSound("spring");
   startFlash("rgba(45,212,191,0.22)", 180);
-  addLog(`泉の水が吾郎をいやした。HP ${before}→${state.player.hp}。`);
+  const recoveryLogs = [];
+  if (recoveredHp > 0) recoveryLogs.push(`HP ${beforeHp}→${state.player.hp}`);
+  if (recoveredHunger > 0) recoveryLogs.push(`満腹度 ${beforeHunger}→${state.player.hunger}`);
+  addLog(`泉の水が吾郎をいやした。${recoveryLogs.join("、")}。`);
 }
 
 function handleEventObjectAtPlayer() {
@@ -4889,6 +4905,9 @@ if (appConfig.testMode) {
         y: state.player.y,
         level: state.player.level,
         hp: state.player.hp,
+        maxHp: state.player.maxHp,
+        hunger: state.player.hunger,
+        maxHunger: state.player.maxHunger,
         inventory: state.player.inventory.map((item) => ({ ...item })),
         equipment: { ...state.player.equipment },
         statuses: state.player.statuses.map((status) => ({ ...status })),
@@ -4904,6 +4923,14 @@ if (appConfig.testMode) {
     }),
     defeat(reason = "テストで倒れた") {
       startGameOver(reason);
+    },
+    spring({ hp = state.player.hp, hunger = state.player.hunger, maxHunger = state.player.maxHunger, used = false } = {}) {
+      state.player.hp = Math.max(0, Math.min(state.player.maxHp, hp));
+      state.player.maxHunger = Math.max(1, Math.min(HUNGER_HARD_MAX, maxHunger));
+      state.player.hunger = Math.max(0, Math.min(state.player.maxHunger, hunger));
+      const object = { used: Boolean(used) };
+      handleSpringObject(object);
+      return { used: object.used };
     },
   };
 }

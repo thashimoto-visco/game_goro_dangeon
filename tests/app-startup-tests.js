@@ -164,6 +164,7 @@ function startApp({ search, protocol = "file:", hostname = "", seed = 12345, tes
     return {
       snapshot: () => window.GORO_DUNGEON_TEST_API.snapshot(),
       defeat: (reason) => window.GORO_DUNGEON_TEST_API.defeat(reason),
+      spring: (options) => window.GORO_DUNGEON_TEST_API.spring(options),
       press(key, options = {}) {
         eventHandlers.get("keydown")?.({
           key,
@@ -243,6 +244,25 @@ assert.strictEqual(titleApp.snapshot().scene, "playing");
 assert.strictEqual(titleApp.snapshot().mapRows, 30);
 assert.strictEqual(titleApp.snapshot().stats.deepestFloor, 1);
 assert.deepStrictEqual(titleApp.snapshot().stats.themesSeen, ["standard"]);
+
+let springResult = titleApp.spring({ hp: 20, hunger: 25, maxHunger: 105 });
+assert.strictEqual(springResult.used, true, "泉はHP満タンでも空腹なら使用される");
+assert.strictEqual(titleApp.snapshot().player.hp, 20);
+assert.strictEqual(titleApp.snapshot().player.hunger, 105, "泉は現在の最大満腹度まで全回復する");
+assert.strictEqual(titleApp.snapshot().player.maxHunger, 105, "泉は最大満腹度を増やさない");
+
+springResult = titleApp.spring({ hp: 5, hunger: 40, maxHunger: 105 });
+assert.strictEqual(springResult.used, true);
+assert.strictEqual(titleApp.snapshot().player.hp, 13, "泉のHP回復量は従来値を維持する");
+assert.strictEqual(titleApp.snapshot().player.hunger, 105, "泉はHPと満腹度を同時に回復する");
+
+springResult = titleApp.spring({ hp: 20, hunger: 105, maxHunger: 105 });
+assert.strictEqual(springResult.used, false, "HPと満腹度が最大なら泉を消費しない");
+
+springResult = titleApp.spring({ hp: 5, hunger: 40, maxHunger: 105, used: true });
+assert.strictEqual(springResult.used, true);
+assert.strictEqual(titleApp.snapshot().player.hp, 5, "使用済みの泉ではHPを回復しない");
+assert.strictEqual(titleApp.snapshot().player.hunger, 40, "使用済みの泉では満腹度を回復しない");
 
 titleApp.defeat("毒に倒れた");
 assert.strictEqual(titleApp.snapshot().result.record.runCount, 1);
