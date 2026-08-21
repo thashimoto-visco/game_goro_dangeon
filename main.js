@@ -1412,7 +1412,8 @@ function confirmInventoryMenu() {
 }
 
 function dropInventoryItem(index) {
-  if (state.menu.type !== "inventory") return;
+  const fromInventoryMenu = state.menu.type === "inventory";
+  if (!fromInventoryMenu && (!canAcceptInput() || state.player.hp <= 0)) return;
   const item = state.player.inventory[index];
   if (!item) {
     playSound("fail");
@@ -1435,10 +1436,12 @@ function dropInventoryItem(index) {
     x: state.player.x,
     y: state.player.y,
   });
-  state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
+  if (fromInventoryMenu) {
+    state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
+  }
   playSound("drop");
   addLog(`${label}を置いた。`);
-  closeMenu();
+  if (fromInventoryMenu) closeMenu();
 }
 
 function handleMenuInput(key) {
@@ -2649,7 +2652,8 @@ function dropThrownItem(item, path) {
 }
 
 function throwInventoryItem(index) {
-  if (state.menu.type !== "inventory") return;
+  const fromInventoryMenu = state.menu.type === "inventory";
+  if (!fromInventoryMenu && (!canAcceptInput() || state.player.hp <= 0)) return;
   const item = state.player.inventory[index];
   if (!item) {
     playSound("fail");
@@ -2668,8 +2672,10 @@ function throwInventoryItem(index) {
   const target = path.length > 0 ? enemyAt(landing.x, landing.y) : null;
 
   removeInventoryItem(item);
-  state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
-  closeMenu();
+  if (fromInventoryMenu) {
+    state.menu.selectedIndex = clamp(index, 0, Math.max(0, state.player.inventory.length - 1));
+    closeMenu();
+  }
 
   addThrowEffect(item, landing.x, landing.y);
   playSound("throw");
@@ -2732,6 +2738,29 @@ function useInventorySlot(slotIndex) {
 
   playSound("fail");
   addLog(`${itemSystem.displayName(item)}の使い方が分からない。`);
+}
+
+function inventorySlotFromKeyboardEvent(event) {
+  const codeMatch = /^(?:Digit|Numpad)([1-9])$/.exec(event.code || "");
+  if (codeMatch) return Number(codeMatch[1]) - 1;
+  const keyMatch = /^([1-9])$/.exec(event.key || "");
+  return keyMatch ? Number(keyMatch[1]) - 1 : null;
+}
+
+function handleInventoryShortcut(event) {
+  const slotIndex = inventorySlotFromKeyboardEvent(event);
+  if (slotIndex === null) return false;
+  if (isMenuOpen() && !event.shiftKey && !event.altKey) return false;
+
+  event.preventDefault();
+  if (event.altKey) {
+    dropInventoryItem(slotIndex);
+  } else if (event.shiftKey) {
+    throwInventoryItem(slotIndex);
+  } else {
+    useInventorySlot(slotIndex);
+  }
+  return true;
 }
 
 function resetPlayerRunState() {
@@ -4402,8 +4431,8 @@ function drawHelpScene() {
     ["足踏み", "Space"],
     ["ダッシュ", "Shift + 方向キー"],
     ["持ち物", "I で開く / Enter で使う・装備する"],
-    ["持ち物操作", "T 投げる / D 置く / Esc 閉じる"],
-    ["即時使用", "1〜9"],
+    ["即時操作", "1〜9 使用 / Shift+番号 投げる"],
+    ["持ち物メニュー", "Alt+番号 置く / メニュー内 T・D"],
     ["ミニマップ", "M"],
     ["状態異常", "毒は継続ダメージ、眠りは行動不能"],
     ["目的", "青い階段を探して、より深い階へ進もう"],
@@ -4801,6 +4830,8 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (handleInventoryShortcut(event)) return;
+
   if (isMenuOpen()) {
     handleMenuInput(key);
     return;
@@ -4811,10 +4842,6 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
-  if (/^[1-9]$/.test(key)) {
-    useInventorySlot(Number(key) - 1);
-    return;
-  }
   const move = event.shiftKey ? startDash : tryMove;
   if (key === "arrowup" || key === "w") move(0, -1);
   if (key === "arrowdown" || key === "s") move(0, 1);
@@ -4931,6 +4958,11 @@ if (appConfig.testMode) {
       const object = { used: Boolean(used) };
       handleSpringObject(object);
       return { used: object.used };
+    },
+    setInventory(types = []) {
+      state.player.inventory = types.filter((type) => itemTypes[type]).map((type) => createItemInstance(type));
+      state.player.equipment = { weapon: null, shield: null };
+      state.items = state.items.filter((item) => item.x !== state.player.x || item.y !== state.player.y);
     },
   };
 }

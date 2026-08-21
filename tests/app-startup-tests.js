@@ -165,11 +165,14 @@ function startApp({ search, protocol = "file:", hostname = "", seed = 12345, tes
       snapshot: () => window.GORO_DUNGEON_TEST_API.snapshot(),
       defeat: (reason) => window.GORO_DUNGEON_TEST_API.defeat(reason),
       spring: (options) => window.GORO_DUNGEON_TEST_API.spring(options),
+      setInventory: (types) => window.GORO_DUNGEON_TEST_API.setInventory(types),
       press(key, options = {}) {
         eventHandlers.get("keydown")?.({
           key,
+          code: options.code || (/^[1-9]$/.test(key) ? `Digit${key}` : ""),
           repeat: Boolean(options.repeat),
           shiftKey: Boolean(options.shiftKey),
+          altKey: Boolean(options.altKey),
           preventDefault() {},
         });
       },
@@ -263,6 +266,35 @@ springResult = titleApp.spring({ hp: 5, hunger: 40, maxHunger: 105, used: true }
 assert.strictEqual(springResult.used, true);
 assert.strictEqual(titleApp.snapshot().player.hp, 5, "使用済みの泉ではHPを回復しない");
 assert.strictEqual(titleApp.snapshot().player.hunger, 40, "使用済みの泉では満腹度を回復しない");
+
+titleApp.setInventory(["riceBall", "herb", "woodenSword"]);
+const turnsBeforeThrow = titleApp.snapshot().stats.turns;
+titleApp.press("!", { code: "Digit1", shiftKey: true });
+assert.deepStrictEqual(
+  titleApp.snapshot().player.inventory.map((item) => item.type),
+  ["herb", "woodenSword"],
+  "Shift+番号は記号化したevent.keyでも対象スロットを投げる"
+);
+assert.strictEqual(titleApp.snapshot().stats.turns, turnsBeforeThrow + 1, "ショートカットで投げても1ターン経過する");
+
+titleApp.setInventory(["riceBall", "herb", "woodenSword"]);
+const turnsBeforeDrop = titleApp.snapshot().stats.turns;
+titleApp.press("1", { code: "Digit1", altKey: true });
+assert.deepStrictEqual(
+  titleApp.snapshot().player.inventory.map((item) => item.type),
+  ["herb", "woodenSword"],
+  "Alt+番号は対象スロットを足元へ置く"
+);
+assert.strictEqual(titleApp.snapshot().stats.turns, turnsBeforeDrop, "置く操作は従来どおりターンを消費しない");
+
+titleApp.setInventory(["riceBall", "herb"]);
+titleApp.press("!", { code: "Digit1", shiftKey: true, altKey: true });
+assert.deepStrictEqual(
+  titleApp.snapshot().player.inventory.map((item) => item.type),
+  ["herb"],
+  "Shift+Alt+番号はAltを優先して置く"
+);
+assert.strictEqual(titleApp.snapshot().stats.turns, turnsBeforeDrop, "Shift+Alt+番号もターンを消費しない");
 
 titleApp.defeat("毒に倒れた");
 assert.strictEqual(titleApp.snapshot().result.record.runCount, 1);
