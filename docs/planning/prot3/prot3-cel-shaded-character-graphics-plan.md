@@ -2,7 +2,7 @@
 
 作成日: 2026-08-21  
 対象: `game_goro_dangeon`  
-状態: 計画策定
+状態: Step 3完了・Step 4進行中（吾郎のidle・歩行・4方向攻撃を完成、敵パイロット未着手）
 
 ## 1. 背景
 
@@ -34,8 +34,8 @@ Prototype 3のキャラクター表現は、以下を基本とする。
 - 遠目でも形を識別できる明快な輪郭線。
 - 明部、基本色、影を2から3段階で分けたセル塗り。
 - 金属、石、皮膜、毛、液体など、敵ごとの素材差はセル塗りの範囲で明確にする。
-- 左上を共通の主光源とする。
-- 必要に応じて弱いリムライトを使い、暗い背景から輪郭を分離する。
+- 画面左から暖色、画面右から青紫のリムライトを当てる画面固定光源とする。
+- 左右反転素材も光だけは反転させず、必要なら画像生成で再照明する。
 - 斜め上から見下ろす3/4視点を基本とする。
 - キャラクターの足元をグリッド上の描画基準点とする。
 - キャラクター画像へ床、背景、接地影を焼き込まない。
@@ -259,7 +259,8 @@ Prototype 3の目的は、ゲームの操作感を維持したまま、キャラ
 
 - 新規キャラクター案は生成として扱う。
 - 承認済み基準画像から方向、表情、ポーズ差分を作る作業は編集として扱う。
-- 透明背景を明示し、実際のアルファチャンネルを保持する。
+- 画像生成時は一様な純緑 `#00FF00` 背景を指定する。
+- 生成後に `tools/remove_chroma_key.py` で実アルファへ変換し、緑の色かぶりを除去する。
 - 複数の異なるキャラクターを1回の生成へまとめない。
 - 異なるキャラクター、方向、ポーズはそれぞれ独立した生成または編集として扱う。
 - プロジェクトで採用する画像は、最終的に必ずリポジトリ内へ保存する。
@@ -304,14 +305,14 @@ Prototype 3の目的は、ゲームの操作感を維持したまま、キャラ
 
 ```text
 Use case: stylized-concept
-Asset type: transparent game character sprite
+Asset type: game character sprite on pure chroma green
 Primary request: <キャラクター固有の要求>
 Subject: <外見、体格、装備、表情>
 Style/medium: 2D anime-style cel shading, clean colored outlines
 Composition/framing: full body, three-quarter top-down view, centered foot anchor
-Lighting/mood: consistent upper-left key light, subtle rim light, dark-fantasy mood
+Lighting/mood: screen-fixed warm light on viewer-left and blue-violet rim on viewer-right
 Color palette: <主色、補助色、アクセント色>
-Constraints: genuinely transparent background; consistent proportions; no floor; no baked shadow
+Constraints: uniform pure green RGB #00FF00 background; consistent proportions; no floor; no baked shadow
 Avoid: text, logo, watermark, scenery, photorealism, pixel art, soft airbrush-only shading
 ```
 
@@ -322,7 +323,7 @@ Avoid: text, logo, watermark, scenery, photorealism, pixel art, soft airbrush-on
 - 光源を変えない。
 - カメラ角度と頭身を変えない。
 - 指定した方向またはポーズ以外を変えない。
-- 透明背景を維持する。
+- 純緑 `#00FF00` 背景を維持し、透過は後処理で作る。
 
 ### 8.5 採否記録
 
@@ -418,7 +419,9 @@ mini-devil-attack-down.webp
 #### 吾郎
 
 - `idle`: 下、上、右。
-- `walk`: 初期はidle画像と手続き的な上下動、傾き、移動補間で表現する。
+- `walk`: 下・上方向は左右の接地を交互表示する2相、横方向は接地2枚とpassing 2枚の4相とする。idle画像は歩行周期へ挟まず、入力終了時だけ表示する。
+- `walk` のフレーム位相は経過時間だけでなく移動距離へ同期し、足滑りを抑える。
+- 4相へ拡張する場合の中間フレームはpassing poseとし、idleを流用しない。
 - `attack`: 下、上、右。
 - `hit`: 専用画像は初期必須とせず、色補正、ノックバック、傾きで表現する。
 - `defeat`: Prototype 3後半で専用画像またはポーズを検討する。
@@ -556,6 +559,14 @@ Prototype 3前半では論理解像度640x480を維持する。
 - 採用案をcanonical referenceとして保存する。
 - 残す人物要素と変更する人物要素を記録する。
 
+完了記録（2026-08-21）:
+
+- B案の顔つき・険しい表情と、C案に近い約3頭身を統合した。
+- 見下ろし視点を維持しつつ、下向きでは顔・視線・胴体を画面下へ正対させた。
+- `55 × 100 px` の床タイル上表示で方向と人物識別性を確認した。
+- グリーンバック原画からPythonクロマキー処理で実透過を作る工程を確立した。
+- 詳細は `goro-idle-down-canonical-v3.md` を参照する。
+
 ### Step 4: パイロット画像の制作
 
 - 吾郎の下、上、右方向を制作する。
@@ -574,6 +585,16 @@ Prototype 3前半では論理解像度640x480を維持する。
 - 左右反転、方向選択、fallbackを共通化する。
 - `main.js` がキャラクター名による分岐を持たないことを確認する。
 
+進捗記録（2026-08-21）:
+
+- `player-actor.js` を追加し、吾郎の画像パス、描画サイズ、motion、方向別clipを `main.js` から分離した。
+- clipはフレーム配列と個別durationを持ち、下・上2コマ、左右4コマを同一の選択処理で扱う。
+- 1マスごとに歩行位相を半周期進め、前後は接地足、左右は接地とpassingが連続移動で交代する。
+- 吾郎の4方向攻撃を各1コマで制作し、フレーム固有の描画矩形をclipへ追加した。
+- 横攻撃は `90 × 100 px`、下攻撃は `75 × 100 px`、上攻撃は `55 × 100 px` で描き、拳のリーチと吾郎本体の倍率を両立した。
+- Prototype 3攻撃clipへ切り替え、旧スプライトシートのフォールバックを撤去した。
+- プレイヤー部分は完了。敵clipとの共通化はスライム、ミニ悪魔ちゃん制作後に行う。
+
 ### Step 6: パイロット実ゲーム統合
 
 - 吾郎、スライム、ミニ悪魔ちゃんを新画像へ切り替える。
@@ -582,6 +603,14 @@ Prototype 3前半では論理解像度640x480を維持する。
 - 攻撃、被弾、撃破、強敵演出を確認する。
 - 1Fと5Fで比較確認を行う。
 - パイロットの採否を決定する。
+
+進捗記録（2026-08-21）:
+
+- 吾郎のidle・歩行・4方向攻撃をPrototype 3 WebPへ切り替えた。
+- 描画サイズを `55 × 100 px` とし、CSSのCanvas拡大を平滑化へ変更した。
+- ローカルブラウザーで下idle、上歩行、左右4相歩行、足元、方向転換、画像読み込みエラーなしを確認した。
+- 吾郎の攻撃方向、足元基準、横パンチの拡張描画幅をローカルブラウザーで確認した。
+- スライム、ミニ悪魔ちゃんは未統合。
 
 ### Step 7: 残りモンスターの制作と統合
 
@@ -726,4 +755,3 @@ Prototype 3完了後、画面全体を同じ方向へ統一する次の計画を
 - キャラクターアトラスとプリロード進捗表示。
 
 これらはPrototype 3のキャラクター移行を完了させた後、実画面で最も差が目立つ箇所から優先順位を決める。
-

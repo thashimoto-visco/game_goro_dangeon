@@ -1,15 +1,14 @@
+if (!window.GORO_DUNGEON_PLAYER_ACTOR || typeof window.GORO_DUNGEON_PLAYER_ACTOR.createSystem !== "function") {
+  throw new Error("必要なプレイヤーアクター GORO_DUNGEON_PLAYER_ACTOR.createSystem を読み込めません。");
+}
+const playerActorSystem = window.GORO_DUNGEON_PLAYER_ACTOR.createSystem();
+
 const TILE = 32;
 const COLS = 40;
 const ROWS = 30;
 const MAX_DELTA = 100;
-const PLAYER_DRAW = { offsetX: -22, offsetY: -92, w: 44, h: 92 };
-const PLAYER_MOTION = {
-  idleCycle: 980,
-  walkBob: 4,
-  attackTilt: 0.12,
-  damageDuration: 220,
-  damageKnockback: 6,
-};
+const PLAYER_DRAW = playerActorSystem.definition.draw;
+const PLAYER_MOTION = playerActorSystem.definition.motion;
 const STAIRS_DRAW = { offsetX: 8, offsetY: 8, w: 16, h: 16 };
 const ITEM_DRAW = {
   size: 22,
@@ -134,7 +133,9 @@ const runRecordSystem = window.GORO_DUNGEON_RUN_RECORD.createSystem({ storage: s
 const loadedRunRecord = runRecordSystem.load();
 
 const images = {
-  goro: createImage("assets/materials/spritesheet.webp"),
+  player: Object.fromEntries(
+    playerActorSystem.assetEntries().map(([key, path]) => [key, createImage(path)])
+  ),
   ui: {
     title: createImage("assets/ui/title_bg.webp"),
     result: createImage("assets/ui/result_bg.webp"),
@@ -163,42 +164,7 @@ const images = {
 };
 
 const sprites = {
-  player: {
-    idle: {
-      down: { image: images.goro, x: 52, y: 5, w: 87, h: 185 },
-      up: { image: images.goro, x: 52, y: 5, w: 87, h: 185 },
-      left: { image: images.goro, x: 42, y: 213, w: 108, h: 198, flipX: true },
-      right: { image: images.goro, x: 42, y: 213, w: 108, h: 198 },
-    },
-    walk: {
-      down: [
-        { image: images.goro, x: 244, y: 5, w: 87, h: 198 },
-        { image: images.goro, x: 820, y: 5, w: 87, h: 198 },
-      ],
-      up: [
-        { image: images.goro, x: 244, y: 5, w: 87, h: 198 },
-        { image: images.goro, x: 820, y: 5, w: 87, h: 198 },
-      ],
-      left: [
-        { image: images.goro, x: 42, y: 213, w: 108, h: 198, flipX: true },
-        { image: images.goro, x: 230, y: 213, w: 115, h: 198, flipX: true },
-        { image: images.goro, x: 427, y: 213, w: 106, h: 198, flipX: true },
-        { image: images.goro, x: 619, y: 213, w: 106, h: 198, flipX: true },
-      ],
-      right: [
-        { image: images.goro, x: 42, y: 213, w: 108, h: 198 },
-        { image: images.goro, x: 230, y: 213, w: 115, h: 198 },
-        { image: images.goro, x: 427, y: 213, w: 106, h: 198 },
-        { image: images.goro, x: 619, y: 213, w: 106, h: 198 },
-      ],
-    },
-    attack: {
-      down: { image: images.goro, x: 424, y: 1045, w: 112, h: 198 },
-      up: { image: images.goro, x: 424, y: 1045, w: 112, h: 198 },
-      left: { image: images.goro, x: 820, y: 1461, w: 88, h: 198, flipX: true },
-      right: { image: images.goro, x: 820, y: 1461, w: 88, h: 198 },
-    },
-  },
+  player: playerActorSystem.createClips(images.player),
   tiles: {
     floor: [
       { image: images.tiles.floor1 },
@@ -234,11 +200,16 @@ const debugParams = new URLSearchParams(window.location.search);
 const debugHostAllowed =
   window.location.protocol === "file:" || ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 const debugStartFloor = Number.parseInt(debugParams.get("floor"), 10);
+const debugEncounterSide = debugParams.get("side");
 const debug = {
   enabled: debugHostAllowed && debugParams.get("debug") === "1",
   startFloor: Number.isInteger(debugStartFloor) && debugStartFloor >= 1 && debugStartFloor <= 99 ? debugStartFloor : null,
   themeKey: debugParams.get("theme") || null,
   encounterStart: debugParams.get("encounter") === "1",
+  encounterSide: ["left", "right", "above", "below"].includes(debugEncounterSide)
+    ? debugEncounterSide
+    : "left",
+  encounterDistance: debugParams.get("adjacent") === "1" ? 1 : 2,
   loadout: debugParams.get("loadout") === "1",
   structureOverlay: false,
 };
@@ -566,6 +537,7 @@ const state = {
     inventory: [],
     equipment: { weapon: null, shield: null },
     statuses: [],
+    gaitTime: 0,
     motion: null,
     hitTime: 0,
     hitDuration: 0,
@@ -1128,6 +1100,7 @@ function startPlayerWalk(fromX, fromY, toX, toY, duration = 160) {
     toY,
     age: 0,
     duration,
+    gaitStart: state.player.gaitTime || 0,
   };
 }
 
@@ -1145,7 +1118,11 @@ function updatePlayerMotion(delta) {
   const motion = state.player.motion;
   if (!motion) return;
 
-  motion.age += delta;
+  motion.age = Math.min(motion.duration, motion.age + delta);
+  if (motion.type === "walk") {
+    const progress = clamp(motion.age / Math.max(1, motion.duration), 0, 1);
+    state.player.gaitTime = motion.gaitStart + progress * PLAYER_MOTION.walkContactInterval;
+  }
   if (motion.age >= motion.duration) {
     clearPlayerMotion();
   }
@@ -1191,17 +1168,21 @@ function getPlayerVisualGrid() {
 function getPlayerSprite() {
   const direction = state.player.direction;
   const visual = getPlayerVisualGrid();
+  let action = "idle";
+  let progress = 0;
   if (visual.attacking) {
-    return sprites.player.attack[direction] || sprites.player.attack.down;
+    action = "attack";
+    progress = visual.progress;
+  } else if (visual.walking) {
+    action = "walk";
+    progress = visual.progress;
   }
 
-  if (!visual.walking) {
-    return sprites.player.idle[direction] || sprites.player.idle.down;
+  const clip = playerActorSystem.clipFor(sprites.player, action, direction);
+  if (action === "walk") {
+    return playerActorSystem.frameAtElapsed(clip, state.player.gaitTime)?.sprite || null;
   }
-
-  const frames = sprites.player.walk[direction] || sprites.player.walk.down;
-  const frameIndex = Math.min(frames.length - 1, Math.floor(visual.progress * frames.length));
-  return frames[frameIndex];
+  return playerActorSystem.frameAtProgress(clip, progress)?.sprite || null;
 }
 
 function addFloatingText(text, x, y, color = "#ffffff") {
@@ -1914,12 +1895,14 @@ function positionDebugPlayerNearSpecialEncounter() {
   applyDebugEncounterLoadout();
   const enemy = state.enemies.find((candidate) => candidate.encounterId === state.specialEncounter?.id);
   if (!enemy) return;
-  const positions = [
-    { x: enemy.x - 2, y: enemy.y },
-    { x: enemy.x + 2, y: enemy.y },
-    { x: enemy.x, y: enemy.y - 2 },
-    { x: enemy.x, y: enemy.y + 2 },
-  ];
+  const positionsBySide = {
+    left: { x: enemy.x - debug.encounterDistance, y: enemy.y },
+    right: { x: enemy.x + debug.encounterDistance, y: enemy.y },
+    above: { x: enemy.x, y: enemy.y - debug.encounterDistance },
+    below: { x: enemy.x, y: enemy.y + debug.encounterDistance },
+  };
+  const preferred = positionsBySide[debug.encounterSide];
+  const positions = [preferred, ...Object.values(positionsBySide).filter((position) => position !== preferred)];
   const position = positions.find(
     (candidate) => isWalkable(candidate.x, candidate.y) && !enemyAt(candidate.x, candidate.y)
   );
@@ -2795,6 +2778,7 @@ function resetPlayerRunState() {
   state.player.inventory = [];
   state.player.equipment = { weapon: null, shield: null };
   state.player.statuses = [];
+  state.player.gaitTime = 0;
   state.player.hitTime = 0;
   state.player.hitDuration = 0;
   state.player.hitDirection = "down";
@@ -3754,7 +3738,7 @@ function playerDrawTuning() {
   if (visual.walking) {
     const step = Math.sin(visual.progress * Math.PI * 2);
     tuning.offsetY -= Math.abs(step) * PLAYER_MOTION.walkBob;
-    tuning.rotation = step * 0.035;
+    tuning.rotation = step * PLAYER_MOTION.walkTilt;
     tuning.shadowScale = 1 - Math.abs(step) * 0.08;
   } else if (visual.attacking) {
     const strike = Math.sin(visual.progress * Math.PI);
@@ -3785,12 +3769,23 @@ function playerDrawTuning() {
 function drawPlayerSpriteWithTuning(sprite, position, tuning) {
   drawPlayerShadow(position, tuning);
 
+  const drawW = sprite?.drawW || PLAYER_DRAW.w;
+  const drawH = sprite?.drawH || PLAYER_DRAW.h;
+  const drawOffsetX = sprite?.drawOffsetX || 0;
+  const drawOffsetY = sprite?.drawOffsetY || 0;
+
   ctx.save();
   ctx.globalAlpha = tuning.alpha;
   ctx.translate(position.x + PLAYER_DRAW.w / 2 + tuning.offsetX, position.y + PLAYER_DRAW.h + tuning.offsetY);
   ctx.rotate(tuning.rotation);
   ctx.scale(tuning.scaleX, tuning.scaleY);
-  const didDraw = drawSprite(sprite, -PLAYER_DRAW.w / 2, -PLAYER_DRAW.h, PLAYER_DRAW.w, PLAYER_DRAW.h);
+  const didDraw = drawSprite(
+    sprite,
+    -drawW / 2 + drawOffsetX,
+    -drawH + drawOffsetY,
+    drawW,
+    drawH
+  );
   if (!didDraw) {
     drawPlayerShape(-PLAYER_DRAW.w / 2, -PLAYER_DRAW.h);
   }

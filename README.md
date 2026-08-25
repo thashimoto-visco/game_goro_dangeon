@@ -95,7 +95,7 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 - 低HP時の心音とBGMの曲調変化、下降音形のフロア降下ジングル
 - 満腹度システム（0になると毎ターンダメージ）
 - SFC風のステータス表示とログ
-- ゲーム内吾郎スプライト: `assets/materials/spritesheet.webp`
+- ゲーム内吾郎idle・歩行・4方向攻撃: `assets/actors/goro/runtime/` 以下のPrototype 3 lossless WebP
 
 - 参照用ラスタ画像: `assets/goro_reference_1.svg`
 - 参照用ラスタ画像（2枚目）: `assets/goro_reference_2.svg`
@@ -107,6 +107,20 @@ https://thashimoto-visco.github.io/game_goro_dangeon/
 
 - タイル画像: `assets/tiles/floor_01.svg`, `assets/tiles/floor_02.svg`, `assets/tiles/floor_03.svg`, `assets/tiles/wall_01.svg`, `assets/tiles/wall_02.svg`, `assets/tiles/wall_03.svg`, `assets/tiles/stairs_down.svg`
 - 仮アイコン画像: `assets/icons/item_weapon.svg`, `assets/icons/item_weapon_rare.svg`, `assets/icons/item_shield.svg`, `assets/icons/item_food.svg`, `assets/icons/item_potion.svg`, `assets/icons/item_scroll.svg`
+
+## プレイヤーアニメーションの追加方法
+
+吾郎の画像パス、描画サイズ、motion値、方向別clipは `player-actor.js` に集約しています。`main.js` はclipのコマ数を前提にせず、各フレームの `duration` と現在の歩行位相から表示画像を選びます。
+
+- 下・上: 2コマ × 180ms。
+- 右・左: 4コマ × 90ms。
+- 全方向: 同じ足が再接地するまで360ms。
+- 1マス移動: 半周期の180ms相当だけ歩行位相を進める。
+- 攻撃: 4方向各1コマ。フレーム固有の `drawW` / `drawH` で横パンチのリーチを保つ。
+
+前後方向を将来4コマへ増やす場合は、`player-actor.js` の該当clipへpassingを追加し、4フレームのduration合計を360msに保ちます。`main.js` の分岐追加は不要です。
+
+関連テスト: `node tests/player-actor-tests.js`
 
 ## アイテムの追加方法
 

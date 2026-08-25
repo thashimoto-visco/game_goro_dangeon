@@ -78,7 +78,7 @@ canvas {
   background: #070b12;
   border: 3px solid #0a0d13;
   width: 100%;
-  image-rendering: pixelated;
+  image-rendering: auto;
 }
 
 dl {

@@ -24,6 +24,7 @@ const scripts = [
   "dungeon-events.js",
   "dungeon-special-encounters.js",
   "run-record.js",
+  "player-actor.js",
   "main.js",
 ];
 
